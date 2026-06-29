@@ -372,9 +372,22 @@ def get_entry_number():
     return len(list(journal_dir.glob("*.md"))) + 1
 
 
+def get_recent_entries(n=5):
+    journal_dir = Path("journal")
+    if not journal_dir.exists():
+        return ""
+    files = sorted(journal_dir.glob("*.md"), key=lambda f: f.stem)
+    recent = files[-n:] if len(files) >= n else files
+    parts = []
+    for f in recent:
+        parts.append(f.read_text(encoding="utf-8").strip())
+    return "\n\n---\n\n".join(parts)
+
+
 def build_prompt(priority, context):
     date_str = today.strftime("%d/%m/%y")
     entry_number = get_entry_number()
+    recent_entries = get_recent_entries()
 
     priority_instructions = {
         "turkey": "The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real.",
@@ -415,7 +428,8 @@ def build_prompt(priority, context):
 
 Today's priority: {instruction}"""
 
-    user = f"Date: {date_str}\nEntry number: {entry_number}\n\nSports data:\n{context if context else 'No live data available today.'}\n\nWrite today's entry."
+    past = f"\n\nPrevious entries (for context and continuity — reference predictions or themes where relevant):\n{recent_entries}" if recent_entries else ""
+    user = f"Date: {date_str}\nEntry number: {entry_number}\n\nSports data:\n{context if context else 'No live data available today.'}{past}\n\nWrite today's entry."
 
     return system, user
 
