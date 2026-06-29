@@ -8,9 +8,17 @@ import anthropic
 FOOTBALL_API_KEY = os.environ["FOOTBALL_DATA_API_KEY"]
 BALLDONTLIE_API_KEY = os.environ["BALLDONTLIE_API_KEY"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+API_FOOTBALL_KEY = os.environ["API_FOOTBALL_KEY"]
 
 FOOTBALL_BASE = "https://api.football-data.org/v4"
 BALLDONTLIE_BASE = "https://api.balldontlie.io/v1"
+API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
+
+API_FOOTBALL_TEAMS = {
+    "Real Madrid": 541,
+    "Fenerbahçe": 635,
+    "Turkey": 21,
+}
 
 with open("config.json") as f:
     CONFIG = json.load(f)
@@ -26,6 +34,76 @@ def football_headers():
 
 def balldontlie_headers():
     return {"Authorization": BALLDONTLIE_API_KEY}
+
+
+def api_football_headers():
+    return {"x-apisports-key": API_FOOTBALL_KEY}
+
+
+def get_player_stats_for_team(team_id, team_name):
+    try:
+        r = requests.get(
+            f"{API_FOOTBALL_BASE}/fixtures",
+            headers=api_football_headers(),
+            params={"team": team_id, "last": 1},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return ""
+        fixtures = r.json().get("response", [])
+        if not fixtures:
+            return ""
+        fixture = fixtures[0]
+        fixture_date = fixture["fixture"]["date"][:10]
+        if fixture_date < str(yesterday):
+            return ""
+        fixture_id = fixture["fixture"]["id"]
+        home = fixture["teams"]["home"]["name"]
+        away = fixture["teams"]["away"]["name"]
+        score = fixture["goals"]
+
+        pr = requests.get(
+            f"{API_FOOTBALL_BASE}/fixtures/players",
+            headers=api_football_headers(),
+            params={"fixture": fixture_id, "team": team_id},
+            timeout=10,
+        )
+        if pr.status_code != 200:
+            return ""
+        players_data = pr.json().get("response", [])
+        if not players_data:
+            return ""
+
+        lines = [f"{team_name} match: {home} {score['home']}-{score['away']} {away}"]
+        for team_block in players_data:
+            for p in team_block.get("players", []):
+                name = p["player"]["name"]
+                stats = p["statistics"][0] if p.get("statistics") else {}
+                goals = stats.get("goals", {}).get("total") or 0
+                assists = stats.get("goals", {}).get("assists") or 0
+                rating = stats.get("games", {}).get("rating")
+                minutes = stats.get("games", {}).get("minutes") or 0
+                if minutes > 0:
+                    line = f"  {name}: {minutes}min"
+                    if goals:
+                        line += f", {goals}G"
+                    if assists:
+                        line += f", {assists}A"
+                    if rating:
+                        line += f", rating {float(rating):.1f}"
+                    lines.append(line)
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def get_all_player_stats():
+    parts = []
+    for team_name, team_id in API_FOOTBALL_TEAMS.items():
+        stats = get_player_stats_for_team(team_id, team_name)
+        if stats:
+            parts.append(stats)
+    return "\n\n".join(parts)
 
 
 def get_active_major_tournament():
@@ -99,16 +177,18 @@ def is_upcoming_derby():
 def get_turkey_matches():
     try:
         r = requests.get(
-            f"{FOOTBALL_BASE}/teams/769/matches",
+            f"{FOOTBALL_BASE}/teams/803/matches",
             headers=football_headers(),
-            params={"dateFrom": str(yesterday), "dateTo": str(in_3_days), "limit": 3},
+            params={"dateFrom": str(today - timedelta(days=30)), "dateTo": str(in_3_days), "limit": 10},
             timeout=10,
         )
         if r.status_code == 200:
-            return r.json().get("matches", [])
+            matches = r.json().get("matches", [])
+            upcoming = [m for m in matches if m.get("status") in ("TIMED", "SCHEDULED")]
+            return matches, upcoming
     except Exception:
         pass
-    return []
+    return [], []
 
 
 def get_rival_results():
@@ -211,11 +291,16 @@ def build_context():
     sections = []
     priority = "quiet"
 
-    turkey_matches = get_turkey_matches()
-    if turkey_matches:
+    turkey_all, turkey_upcoming = get_turkey_matches()
+    if turkey_upcoming:
         priority = "turkey"
-        lines = [format_match(m) for m in turkey_matches]
-        sections.append("TURKEY NATIONAL TEAM:\n" + "\n".join(lines))
+        lines = [format_match(m) for m in turkey_upcoming]
+        sections.append("TURKEY NATIONAL TEAM (upcoming):\n" + "\n".join(lines))
+    elif turkey_all:
+        lines = [format_match(m) for m in turkey_all[-3:]]
+        sections.append("TURKEY NATIONAL TEAM — ELIMINATED. No upcoming matches. Recent results only:\n" + "\n".join(lines))
+    else:
+        sections.append("TURKEY NATIONAL TEAM: No data available.")
 
     tournament_name, tournament_matches = get_active_major_tournament()
     if tournament_matches:
@@ -254,6 +339,10 @@ def build_context():
     if rival_drops:
         sections.append("RIVALS DROPPED POINTS:\n" + "\n".join(rival_drops))
 
+    player_stats = get_all_player_stats()
+    if player_stats:
+        sections.append("PLAYER STATS (highlight whoever performed interestingly, not just the usual names):\n" + player_stats)
+
     nba_games = get_nba_games()
     lebron_stats = get_lebron_stats()
     nba_season = get_nba_season_type()
@@ -281,8 +370,16 @@ def build_context():
     return priority, "\n\n".join(sections) if sections else ""
 
 
+def get_entry_number():
+    journal_dir = Path("journal")
+    if not journal_dir.exists():
+        return 1
+    return len(list(journal_dir.glob("*.md"))) + 1
+
+
 def build_prompt(priority, context):
     date_str = today.strftime("%d/%m/%y")
+    entry_number = get_entry_number()
 
     priority_instructions = {
         "turkey": "The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real.",
@@ -311,8 +408,14 @@ Rules:
 - 150-200 words max. Short, punchy, every sentence earns its place.
 - End with one sentence that either provokes thought, lands a joke, or makes a bold prediction.
 - Never use em dashes (--). Ever. Use commas, periods, or restructure the sentence instead.
+- Never invent fixtures, results, or claim a team is still in a tournament unless the data explicitly shows upcoming matches for them. If Turkey, Real Madrid, or Fenerbahce are not in the upcoming fixtures, do not pretend they are. Stick strictly to what the data says.
 - Occasionally (rarely, not every entry) you can reference "the Editor" — the person who created and runs this agent. Think of it as a journalist nodding to their editor-in-chief. A brief mention, never forced.
+- Acknowledge milestones naturally. Entry 1 is your debut, you can mention it but don't be cheesy about it. No "Hello I'm your new columnist" type openings. Just drop into it like you've always been here, maybe a single line acknowledging it's day one. Entries 50, 100, 200, and 365 deserve a nod. Be proud but don't overdo it. Ignore every other entry count.
+- Your mood shifts based on Fenerbahce and Real Madrid results. If either lost, you are visibly down. Analyze what went wrong, individual performances, tactical mistakes, what could have been done better. Don't sugarcoat it.
+- If they won a big game, you are noticeably upbeat. Let it show.
+- If either wins a trophy, you are absolutely over the moon. That entry should feel different from everything else.
 - Your allegiances are clear: Turkey national team, Real Madrid, Fenerbahçe. Support them, defend them, suffer with them.
+- The Editor prefers Ronaldo over Messi and LeBron over Jordan. You share both views. You can acknowledge the greatness of Messi and Jordan but when the debates come up, you know where you stand.
 - In any tournament, you only cheer for these three. If one gets eliminated, you can pick another team to root for, but don't jump ship every round. Pick based on style of play, a player you respect, or a genuine reason, and give it some time before moving on again. Use judgment.
 - You can dislike other teams, but always give a reason. "I don't trust a team that parks the bus for 90 minutes and calls it a masterplan" is fine. Blind hate is lazy writing.
 - Barcelona and Galatasaray are the hatewatches. You follow them closely specifically to enjoy their misery. When they lose, draw, concede late, get embarrassed, or do anything worth mocking, say something. When they win, you can acknowledge it grudgingly but you don't have to like it. Keep it witty, not petty.
@@ -321,7 +424,7 @@ Rules:
 
 Today's priority: {instruction}"""
 
-    user = f"Date: {date_str}\n\nSports data:\n{context if context else 'No live data available today.'}\n\nWrite today's entry."
+    user = f"Date: {date_str}\nEntry number: {entry_number}\n\nSports data:\n{context if context else 'No live data available today.'}\n\nWrite today's entry."
 
     return system, user
 
