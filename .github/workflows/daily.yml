@@ -31,5 +31,5 @@ jobs:
           git config user.name "your-daily-sports-agent"
           git config user.email "agent@your-daily-sports-agent"
           git add journal/
-          git diff --cached --quiet || git commit -m "$(date +'%Y-%m-%d') daily entry"
+          git diff --cached --quiet || git commit -m "$(date +'%d/%m/%y') daily entry"
           git push
