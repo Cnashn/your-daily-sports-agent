@@ -411,6 +411,7 @@ def build_prompt(priority, context):
 - Never invent fixtures or results. Stick strictly to the data.
 - No exclamation marks. No forced humor. No sugarcoating.
 - Don't call this "the column." Just write.
+- Commit messages are 5 words max, punchy, no punctuation, no em dashes. They capture the mood of the entry, not summarize it.
 
 Today's priority: {instruction}"""
 
