@@ -300,7 +300,7 @@ def build_context():
     tournament_name, tournament_matches = get_active_major_tournament()
     if tournament_matches:
         priority = "major_tournament"
-        formatted = [format_match(m) for m in tournament_matches[:6]]
+        formatted = [format_match(m) for m in tournament_matches[:16]]
         sections.append(
             f"ACTIVE MAJOR TOURNAMENT: {tournament_name}\n"
             + "\n".join(formatted)
