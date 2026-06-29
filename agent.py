@@ -282,7 +282,7 @@ def build_context():
 
 
 def build_prompt(priority, context):
-    date_str = today.strftime("%B %d, %Y")
+    date_str = today.strftime("%d/%m/%y")
 
     priority_instructions = {
         "turkey": "The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real.",
@@ -341,7 +341,7 @@ def save_entry(entry):
     journal_dir = Path("journal")
     journal_dir.mkdir(exist_ok=True)
     filename = journal_dir / f"{today}.md"
-    date_str = today.strftime("%B %d, %Y")
+    date_str = today.strftime("%d/%m/%y")
     content = f"# {date_str}\n\n{entry}\n"
     filename.write_text(content, encoding="utf-8")
     print(f"Saved: {filename}")
