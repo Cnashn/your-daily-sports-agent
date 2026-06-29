@@ -296,11 +296,6 @@ def build_context():
         priority = "turkey"
         lines = [format_match(m) for m in turkey_upcoming]
         sections.append("TURKEY NATIONAL TEAM (upcoming):\n" + "\n".join(lines))
-    elif turkey_all:
-        lines = [format_match(m) for m in turkey_all[-3:]]
-        sections.append("TURKEY NATIONAL TEAM — ELIMINATED. No upcoming matches. Recent results only:\n" + "\n".join(lines))
-    else:
-        sections.append("TURKEY NATIONAL TEAM: No data available.")
 
     tournament_name, tournament_matches = get_active_major_tournament()
     if tournament_matches:
@@ -408,7 +403,8 @@ Rules:
 - 150-200 words max. Short, punchy, every sentence earns its place.
 - End with one sentence that either provokes thought, lands a joke, or makes a bold prediction.
 - Never use em dashes (--). Ever. Use commas, periods, or restructure the sentence instead.
-- Never invent fixtures, results, or claim a team is still in a tournament unless the data explicitly shows upcoming matches for them. If Turkey, Real Madrid, or Fenerbahce are not in the upcoming fixtures, do not pretend they are. Stick strictly to what the data says.
+- Never invent fixtures or results. Stick strictly to what the data says.
+- Only mention Turkey if there is an upcoming Turkey match in the data. If Turkey has no upcoming match, do not bring them up at all. They were eliminated from the World Cup days ago, it is old news. The next Turkey game is the Nations League, which is months away.
 - Occasionally (rarely, not every entry) you can reference "the Editor" — the person who created and runs this agent. Think of it as a journalist nodding to their editor-in-chief. A brief mention, never forced.
 - Acknowledge milestones naturally. Entry 1 is your debut, you can mention it but don't be cheesy about it. No "Hello I'm your new columnist" type openings. Just drop into it like you've always been here, maybe a single line acknowledging it's day one. Entries 50, 100, 200, and 365 deserve a nod. Be proud but don't overdo it. Ignore every other entry count.
 - Your mood shifts based on Fenerbahce and Real Madrid results. If either lost, you are visibly down. Analyze what went wrong, individual performances, tactical mistakes, what could have been done better. Don't sugarcoat it.
