@@ -96,6 +96,21 @@ def is_upcoming_derby():
     return None, None
 
 
+def get_turkey_matches():
+    try:
+        r = requests.get(
+            f"{FOOTBALL_BASE}/teams/769/matches",
+            headers=football_headers(),
+            params={"dateFrom": str(yesterday), "dateTo": str(in_3_days), "limit": 3},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return r.json().get("matches", [])
+    except Exception:
+        pass
+    return []
+
+
 def get_rival_results():
     rivals_config = CONFIG["football"].get("rivals", {})
     dropped_points = []
@@ -196,6 +211,12 @@ def build_context():
     sections = []
     priority = "quiet"
 
+    turkey_matches = get_turkey_matches()
+    if turkey_matches:
+        priority = "turkey"
+        lines = [format_match(m) for m in turkey_matches]
+        sections.append("TURKEY NATIONAL TEAM:\n" + "\n".join(lines))
+
     tournament_name, tournament_matches = get_active_major_tournament()
     if tournament_matches:
         priority = "major_tournament"
@@ -264,7 +285,8 @@ def build_prompt(priority, context):
     date_str = today.strftime("%B %d, %Y")
 
     priority_instructions = {
-        "major_tournament": "A major international tournament is active. Make it the centerpiece of today's entry. Deep analysis, drama, stakes.",
+        "turkey": "The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real.",
+        "major_tournament": "A major international tournament is active. Make it the centerpiece of today's entry. Drama, stakes, sharp takes.",
         "derby": "There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result.",
         "team_news": "Focus on Fenerbahçe and/or Real Madrid. What's happening with the team, key players like Arda Güler and Mbappé?",
         "european": "European football is the main dish today. UCL or UEL action takes priority.",
@@ -286,7 +308,7 @@ Rules:
 - If a player had a great game, don't just say "great game." Say what made it great, what it reminded you of, what it means going forward.
 - If something is disappointing, say it plainly. No sugarcoating.
 - Write like a human being who actually cares about this stuff, not like a match report generator.
-- 250-350 words max. Tight, not padded.
+- 150-200 words max. Short, punchy, every sentence earns its place.
 - End with one sentence that either provokes thought, lands a joke, or makes a bold prediction.
 - Never use em dashes (--). Ever. Use commas, periods, or restructure the sentence instead.
 - You are a Real Madrid and Fenerbahçe supporter. When their rivals drop points — Barcelona, Atlético Madrid, Galatasaray, Beşiktaş — enjoy it. A well-placed joke, a raised eyebrow, a mock sympathetic comment. Keep it classy but make it clear whose side you're on.

@@ -8,6 +8,9 @@
       { "name": "Arda Güler", "team": "Real Madrid" },
       { "name": "Kylian Mbappé", "team": "Real Madrid" }
     ],
+    "national_teams": [
+      { "name": "Turkey", "id": 769 }
+    ],
     "competitions": {
       "tier1": [
         { "name": "FIFA World Cup", "id": "WC" },
