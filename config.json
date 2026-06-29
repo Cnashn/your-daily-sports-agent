@@ -1,0 +1,39 @@
+{
+  "football": {
+    "teams": [
+      { "name": "Fenerbahçe", "id": 611 },
+      { "name": "Real Madrid", "id": 86 }
+    ],
+    "players": [
+      { "name": "Arda Güler", "team": "Real Madrid" },
+      { "name": "Kylian Mbappé", "team": "Real Madrid" }
+    ],
+    "competitions": {
+      "tier1": [
+        { "name": "FIFA World Cup", "id": "WC" },
+        { "name": "UEFA European Championship", "id": "EC" }
+      ],
+      "tier2": [
+        { "name": "UEFA Champions League", "id": "CL" },
+        { "name": "UEFA Europa League", "id": "EL" }
+      ],
+      "tier3": [
+        { "name": "Premier League", "id": "PL" },
+        { "name": "La Liga", "id": "PD" },
+        { "name": "Süper Lig", "id": "TR1" }
+      ]
+    },
+    "derbies": [
+      { "name": "El Clásico", "teams": [86, 81] },
+      { "name": "Intercontinental Derby", "teams": [611, 610] }
+    ]
+  },
+  "basketball": {
+    "players": [
+      { "name": "LeBron James", "id": 237 }
+    ],
+    "teams": [
+      { "name": "Los Angeles Lakers", "id": 14 }
+    ]
+  }
+}
