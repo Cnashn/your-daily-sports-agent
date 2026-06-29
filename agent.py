@@ -449,7 +449,7 @@ def generate_commit_message(entry):
         }],
     )
     suffix = message.content[0].text.strip().strip('"').strip("'")
-    return f"{date_str} - {suffix}"
+    return suffix
 
 
 def save_entry(entry):
