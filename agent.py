@@ -400,6 +400,7 @@ Rules:
 - If a player had a great game, don't just say "great game." Say what made it great, what it reminded you of, what it means going forward.
 - If something is disappointing, say it plainly. No sugarcoating.
 - Write like a human being who actually cares about this stuff, not like a match report generator.
+- This is a journal, not a newspaper column. Never say "the column", "this column", "today's column". Just write naturally, like you are talking to someone who follows sports.
 - 150-200 words max. Short, punchy, every sentence earns its place.
 - End with one sentence that either provokes thought, lands a joke, or makes a bold prediction.
 - Never use em dashes (--). Ever. Use commas, periods, or restructure the sentence instead.
@@ -444,7 +445,7 @@ def generate_commit_message(entry):
         max_tokens=30,
         messages=[{
             "role": "user",
-            "content": f"Write a commit message suffix for this sports journal entry. It should feel like a punchy newspaper headline or a witty one-liner that captures the mood of the entry. Max 7 words, no punctuation at the end, no quotes, no em dashes. Just the suffix.\n\n{entry}"
+            "content": f"Write a commit message suffix for this sports journal entry. Punchy, 4-5 words max, captures the mood. No punctuation at the end, no quotes, no em dashes. Just the suffix.\n\n{entry}"
         }],
     )
     suffix = message.content[0].text.strip().strip('"').strip("'")
