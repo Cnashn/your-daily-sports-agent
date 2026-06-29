@@ -265,9 +265,12 @@ def get_lebron_stats():
 
 def get_nba_season_type():
     month = today.month
-    if 4 <= month <= 6:
+    day = today.day
+    if 10 <= month or month <= 3:
+        return "regular season"
+    if month == 4 or month == 5 or (month == 6 and day <= 20):
         return "playoffs"
-    return "regular season"
+    return "off-season"
 
 
 def format_match(m):
@@ -292,14 +295,19 @@ def build_context():
     priority = "quiet"
 
     turkey_all, turkey_upcoming = get_turkey_matches()
+    turkey_recent = [m for m in turkey_all if m.get("status") == "FINISHED"]
     if turkey_upcoming:
         priority = "turkey"
         lines = [format_match(m) for m in turkey_upcoming]
-        sections.append("TURKEY NATIONAL TEAM (upcoming):\n" + "\n".join(lines))
+        section = "TURKEY NATIONAL TEAM (upcoming):\n" + "\n".join(lines)
+        if turkey_recent:
+            section += "\nRecent results:\n" + "\n".join(format_match(m) for m in turkey_recent[-3:])
+        sections.append(section)
 
     tournament_name, tournament_matches = get_active_major_tournament()
     if tournament_matches:
-        priority = "major_tournament"
+        if priority != "turkey":
+            priority = "major_tournament"
         formatted = [format_match(m) for m in tournament_matches[:16]]
         sections.append(
             f"ACTIVE MAJOR TOURNAMENT: {tournament_name}\n"
@@ -358,8 +366,8 @@ def build_context():
         nba_lines.append(f"LeBron James: {pts}pts {reb}reb {ast}ast")
 
     if nba_lines:
-        if priority == "quiet" and nba_season == "playoffs":
-            priority = "nba_playoffs"
+        if priority == "quiet" and nba_season in ("playoffs", "regular season"):
+            priority = "nba_active"
         sections.append(f"NBA ({nba_season}):\n" + "\n".join(nba_lines))
 
     return priority, "\n\n".join(sections) if sections else ""
@@ -376,7 +384,7 @@ def get_recent_entries(n=5):
     journal_dir = Path("journal")
     if not journal_dir.exists():
         return ""
-    files = sorted(journal_dir.glob("*.md"), key=lambda f: f.stem)
+    files = sorted(journal_dir.glob("*.md"), key=lambda f: datetime.strptime(f.stem, "%d-%m-%y"))
     recent = files[-n:] if len(files) >= n else files
     parts = []
     for f in recent:
@@ -395,7 +403,7 @@ def build_prompt(priority, context):
         "derby": "There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result.",
         "team_news": "Focus on Fenerbahçe and/or Real Madrid. What's happening with the team, key players like Arda Güler and Mbappé?",
         "european": "European football is the main dish today. UCL or UEL action takes priority.",
-        "nba_playoffs": "NBA Playoffs are on. Give basketball significant weight alongside football.",
+        "nba_active": "NBA is active (playoffs or regular season). Give basketball real weight today alongside football.",
         "quiet": "It's a quiet day in sports. Write a fun historical piece — pick a memorable moment from sports history that happened on or around this date (any year), or share a fascinating fact about one of the followed teams or players. Be creative and specific.",
     }
 
@@ -403,7 +411,7 @@ def build_prompt(priority, context):
 
     system = f"""You are a sports journalist with strong opinions, dry humor, and genuine tactical knowledge. This is a public daily journal — professional but never boring. Write like someone who actually cares and knows how to talk about it.
 
-**Beat:** Football (Fenerbahçe, Real Madrid, Arda Güler, Mbappé, UCL, UEL, Premier League, La Liga, Süper Lig, World Cup, Euros) and basketball (LeBron James wherever he plays, Lakers, NBA).
+**Beat:** Football (Fenerbahçe, Real Madrid, Arda Güler, Mbappé, UCL, UEL, Premier League, La Liga, Süper Lig, World Cup, Euros) and basketball (LeBron James wherever he plays, Lakers, NBA). Basketball is a secondary interest, always behind football. Mention it when there's something genuinely worth saying — start of regular season, playoffs, a big game, a standout performance. Keep it brief unless it's a quiet football day.
 
 **Allegiances:** Turkey national team, Real Madrid, Fenerbahçe. Support them, suffer with them. Your mood tracks their results — losses make you visibly down, analyze what went wrong; big wins let it show; a trophy win makes that entry feel completely different. In tournaments, cheer for these three first. If one is eliminated, pick a replacement based on style or a player you respect — don't jump ship every round. Ronaldo over Messi, LeBron over Jordan. Acknowledge the other side's greatness, but you know where you stand.
 
@@ -412,8 +420,7 @@ def build_prompt(priority, context):
 **How to write:**
 - This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day — a tactical trend, a player's form, a historical parallel, a rivalry angle.
 - Show tactical intelligence. Pressing, positioning, momentum shifts, individual errors. Don't say "they played well," say why.
-- Score predictions only for matches within the next 7 days where both teams are confirmed. Never predict a game months out.
-- For tournaments (UCL, World Cup, etc.), you may predict your finalists or winner exactly once per tournament. Check the previous entries — if you already made a tournament prediction, do not make another one. Reference it instead.
+- Score predictions only for matches within the next 3 days where both teams are confirmed. Never predict a game further out.
 - When referencing past predictions, be honest: say whether you got it right or wrong.
 - Occasionally drop an "on this day" fact woven naturally — covered sports only, no tennis or hockey.
 - Occasionally nod to "the Editor" who runs this. Brief, never forced.
@@ -426,7 +433,6 @@ def build_prompt(priority, context):
 - Never invent fixtures or results. Stick strictly to the data.
 - No exclamation marks. No forced humor. No sugarcoating.
 - Don't call this "the column." Just write.
-- Commit messages are 5 words max, punchy, no punctuation, no em dashes. They capture the mood of the entry, not summarize it.
 
 Today's priority: {instruction}"""
 
@@ -439,8 +445,8 @@ Today's priority: {instruction}"""
 def generate_entry(system, user):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=500,
+        model="claude-sonnet-4-6",
+        max_tokens=750,
         messages=[{"role": "user", "content": user}],
         system=system,
     )
@@ -449,13 +455,12 @@ def generate_entry(system, user):
 
 def generate_commit_message(entry):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    date_str = today.strftime("%d/%m/%y")
     message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model="claude-sonnet-4-6",
         max_tokens=30,
         messages=[{
             "role": "user",
-            "content": f"Write a commit message suffix for this sports journal entry. Punchy, 4-5 words max, captures the mood. No punctuation at the end, no quotes, no em dashes. Just the suffix.\n\n{entry}"
+            "content": f"Write a git commit message for this sports journal entry. 5 words max, punchy, captures the mood not the content. No punctuation, no quotes, no em dashes. Just the message.\n\n{entry}"
         }],
     )
     suffix = message.content[0].text.strip().strip('"').strip("'")
