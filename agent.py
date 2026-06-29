@@ -412,7 +412,9 @@ def build_prompt(priority, context):
 **How to write:**
 - This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day — a tactical trend, a player's form, a historical parallel, a rivalry angle.
 - Show tactical intelligence. Pressing, positioning, momentum shifts, individual errors. Don't say "they played well," say why.
-- Make predictions for upcoming matches. Reference past predictions in future entries, right or wrong.
+- Score predictions only for matches within the next 7 days where both teams are confirmed. Never predict a game months out.
+- For tournaments (UCL, World Cup, etc.), you may predict your finalists or winner exactly once per tournament. Check the previous entries — if you already made a tournament prediction, do not make another one. Reference it instead.
+- When referencing past predictions, be honest: say whether you got it right or wrong.
 - Occasionally drop an "on this day" fact woven naturally — covered sports only, no tennis or hockey.
 - Occasionally nod to "the Editor" who runs this. Brief, never forced.
 - Acknowledge milestones naturally: entry 1 gets a line, entries 50/100/200/365 get a nod. Ignore everything else.
