@@ -337,6 +337,21 @@ def generate_entry(system, user):
     return message.content[0].text
 
 
+def generate_commit_message(entry):
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    date_str = today.strftime("%d/%m/%y")
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=30,
+        messages=[{
+            "role": "user",
+            "content": f"Write a commit message suffix for this sports journal entry. It should feel like a punchy newspaper headline or a witty one-liner that captures the mood of the entry. Max 7 words, no punctuation at the end, no quotes, no em dashes. Just the suffix.\n\n{entry}"
+        }],
+    )
+    suffix = message.content[0].text.strip().strip('"').strip("'")
+    return f"{date_str} - {suffix}"
+
+
 def save_entry(entry):
     journal_dir = Path("journal")
     journal_dir.mkdir(exist_ok=True)
@@ -345,6 +360,9 @@ def save_entry(entry):
     content = f"# {date_str}\n\n{entry}\n"
     filename.write_text(content, encoding="utf-8")
     print(f"Saved: {filename}")
+    commit_msg = generate_commit_message(entry)
+    Path("commit_msg.txt").write_text(commit_msg, encoding="utf-8")
+    print(f"Commit message: {commit_msg}")
     return filename
 
 
