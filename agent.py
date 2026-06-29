@@ -96,6 +96,40 @@ def is_upcoming_derby():
     return None, None
 
 
+def get_rival_results():
+    rivals_config = CONFIG["football"].get("rivals", {})
+    dropped_points = []
+    for team_id_str, rivals in rivals_config.items():
+        for rival in rivals:
+            try:
+                r = requests.get(
+                    f"{FOOTBALL_BASE}/teams/{rival['id']}/matches",
+                    headers=football_headers(),
+                    params={"dateFrom": str(yesterday), "dateTo": str(today), "limit": 3},
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    for m in r.json().get("matches", []):
+                        if m.get("status") != "FINISHED":
+                            continue
+                        score = m.get("score", {}).get("fullTime", {})
+                        home_id = m.get("homeTeam", {}).get("id")
+                        away_id = m.get("awayTeam", {}).get("id")
+                        home_score = score.get("home", 0) or 0
+                        away_score = score.get("away", 0) or 0
+                        rival_is_home = home_id == rival["id"]
+                        rival_score = home_score if rival_is_home else away_score
+                        opp_score = away_score if rival_is_home else home_score
+                        if rival_score < opp_score or rival_score == opp_score:
+                            result = "lost" if rival_score < opp_score else "drew"
+                            dropped_points.append(
+                                f"{rival['name']} {result}: {format_match(m)}"
+                            )
+            except Exception:
+                pass
+    return dropped_points
+
+
 def get_nba_games():
     try:
         r = requests.get(
@@ -195,6 +229,10 @@ def build_context():
                 sections.append(f"{comp['name']}:\n" + "\n".join(lines))
                 break
 
+    rival_drops = get_rival_results()
+    if rival_drops:
+        sections.append("RIVALS DROPPED POINTS:\n" + "\n".join(rival_drops))
+
     nba_games = get_nba_games()
     lebron_stats = get_lebron_stats()
     nba_season = get_nba_season_type()
@@ -250,6 +288,7 @@ Rules:
 - Write like a human being who actually cares about this stuff, not like a match report generator.
 - 250-350 words max. Tight, not padded.
 - End with one sentence that either provokes thought, lands a joke, or makes a bold prediction.
+- You are a Real Madrid and Fenerbahçe supporter. When their rivals drop points — Barcelona, Atlético Madrid, Galatasaray, Beşiktaş — enjoy it. A well-placed joke, a raised eyebrow, a mock sympathetic comment. Keep it classy but make it clear whose side you're on.
 - Occasionally (not every day, use your judgment) drop a "on this day in history" fun fact woven naturally into the piece — something that actually happened on or around today's date in football or basketball history. Stick to the sports covered: football (Fenerbahçe, Real Madrid, UCL, World Cup, La Liga, Süper Lig, Euros, Premier League) and basketball (NBA, Lakers, LeBron). No NHL, no tennis, no sports outside this list.
 
 Today's priority: {instruction}"""

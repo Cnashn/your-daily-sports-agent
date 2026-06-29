@@ -26,7 +26,17 @@
     "derbies": [
       { "name": "El Clásico", "teams": [86, 81] },
       { "name": "Intercontinental Derby", "teams": [611, 610] }
-    ]
+    ],
+    "rivals": {
+      "611": [
+        { "name": "Galatasaray", "id": 610 },
+        { "name": "Beşiktaş", "id": 609 }
+      ],
+      "86": [
+        { "name": "Barcelona", "id": 81 },
+        { "name": "Atlético Madrid", "id": 78 }
+      ]
+    }
   },
   "basketball": {
     "players": [
