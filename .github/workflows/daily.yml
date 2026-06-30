@@ -2,7 +2,7 @@ name: Daily Sports Agent
 
 on:
   schedule:
-    - cron: "0 10 * * *"
+    - cron: "0 9 * * *"
   workflow_dispatch:
 
 jobs:
@@ -31,8 +31,8 @@ jobs:
 
       - name: Commit and push
         run: |
-          git config user.name "your-daily-sports-agent"
-          git config user.email "agent@your-daily-sports-agent"
+          git config user.name "Cnashn"
+          git config user.email "cansahin2001@gmail.com"
           git add journal/
           git diff --cached --quiet || git commit -m "$(cat commit_msg.txt)"
           git push
