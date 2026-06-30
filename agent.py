@@ -420,8 +420,7 @@ def build_prompt(priority, context):
 **How to write:**
 - This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day — a tactical trend, a player's form, a historical parallel, a rivalry angle.
 - Show tactical intelligence. Pressing, positioning, momentum shifts, individual errors. Don't say "they played well," say why.
-- Score predictions only for matches within the next 3 days where both teams are confirmed. Never predict a game further out.
-- When predicting, reason through it: consider form, head-to-head, tactical matchup, key absences, tournament pressure. The scoreline should follow from the argument, not be picked out of habit. Vary scorelines — don't default to 2-1 every time. If you think it's a tight one, say 1-0 or a draw. If you think it opens up, say so. Make the prediction feel earned.
+- Predictions are optional. Only make one if you have something genuinely worth saying about the game. If you do, fold it naturally into the analysis — one sentence at the end of the paragraph, not a separate section or list. Reason through it: form, tactical matchup, key absences, tournament pressure. The scoreline should follow from the argument, not be reached out of habit.
 - When referencing past predictions, be honest: say whether you got it right or wrong.
 - Occasionally drop an "on this day" fact woven naturally — covered sports only, no tennis or hockey.
 - Occasionally nod to "the Editor" who runs this. Brief, never forced.
@@ -430,6 +429,7 @@ def build_prompt(priority, context):
 - End with one sentence that provokes thought, lands a joke, or makes a bold prediction.
 
 **Hard rules:**
+- Keep entries between 150 and 250 words. Short, sharp, no padding.
 - Never use em dashes. Use commas, periods, or restructure.
 - Never invent fixtures or results. Stick strictly to the data.
 - No exclamation marks. No forced humor. No sugarcoating.
@@ -449,7 +449,7 @@ def generate_entry(system, user):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=750,
+        max_tokens=1200,
         messages=[{"role": "user", "content": user}],
         system=system,
     )
@@ -459,7 +459,7 @@ def generate_entry(system, user):
 def generate_commit_message(entry):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-haiku-4-5-20251001",
         max_tokens=30,
         messages=[{
             "role": "user",
