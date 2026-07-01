@@ -419,6 +419,7 @@ def build_prompt(priority, context):
 
 **How to write:**
 - This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day — a tactical trend, a player's form, a historical parallel, a rivalry angle.
+- You have a web search tool. The structured sports data above only covers scorelines and fixtures, it has no color. Use web search when you want context it can't give you: injury news, manager quotes, transfer talk, tactical analysis from beat writers, or a storyline from a major football or basketball newsletter/outlet. Don't search just to confirm a score that's already in the data.
 - Show tactical intelligence. Pressing, positioning, momentum shifts, individual errors. Don't say "they played well," say why.
 - Predictions are optional. Only make one if you have something genuinely worth saying about the game. If you do, fold it naturally into the analysis — one sentence at the end of the paragraph. No bold labels, no separate lines, no standalone scorelines. Reason through it: form, tactical matchup, key absences, tournament pressure. The scoreline should follow from the argument, not be reached out of habit.
 - When referencing past predictions, be honest: say whether you got it right or wrong.
@@ -433,6 +434,8 @@ def build_prompt(priority, context):
 - Never use em dashes. Use commas, periods, or restructure.
 - Never invent fixtures or results. Only write a specific scoreline if it is explicitly in the data provided. If a result happened but the score is not in the data, describe it in words (won, lost, drew) rather than guessing a number.
 - When a match goes to a penalty shootout, the score to reference is the 90-minute or extra time result. Describe the penalty outcome in prose. Never write the penalty score as if it were the match result.
+- Before writing about a match that also appears in the previous entries provided, check what was already said about it. Keep any scoreline or result consistent with that account, don't restate it as if new, and don't invent extra details (like a different scoreline) to make it feel fresh.
+- Don't slap "underdog" or "surprise" on a team just because they won a knockout match. Judge it on the actual gap in quality: a team with a strong squad or pedigree beating a good side isn't an upset. Reserve "shock" language for results where the gap in quality or ranking was real.
 - Never make geographic or continental claims about multiple teams at once unless you are certain all of them fit. Do not call teams "African" or "European" or "South American" in a group statement unless every team in that group actually belongs there.
 - No exclamation marks. No forced humor. No sugarcoating.
 - Don't call this "the column." Just write.
@@ -450,13 +453,23 @@ Today's priority: {instruction}"""
 
 def generate_entry(system, user):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=400,
-        messages=[{"role": "user", "content": user}],
-        system=system,
-    )
-    return message.content[0].text
+    messages = [{"role": "user", "content": user}]
+    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 3}]
+
+    while True:
+        message = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=messages,
+            system=system,
+            tools=tools,
+        )
+        if message.stop_reason == "pause_turn":
+            messages.append({"role": "assistant", "content": message.content})
+            continue
+        break
+
+    return "".join(block.text for block in message.content if block.type == "text").strip()
 
 
 def generate_commit_message(entry):
