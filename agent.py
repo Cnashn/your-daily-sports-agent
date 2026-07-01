@@ -393,7 +393,7 @@ def get_recent_entries(n=5):
 
 
 def build_prompt(priority, context):
-    date_str = today.strftime("%d/%m/%y")
+    date_str = today.strftime("%-d %B %Y")
     entry_number = get_entry_number()
     recent_entries = get_recent_entries()
 
@@ -477,7 +477,7 @@ def save_entry(entry):
     journal_dir = Path("journal")
     journal_dir.mkdir(exist_ok=True)
     filename = journal_dir / f"{today.strftime('%y-%m-%d')}.md"
-    date_str = today.strftime("%d/%m/%y")
+    date_str = today.strftime("%-d %B %Y")
     content = f"# {date_str}\n\n{entry}\n"
     filename.write_text(content, encoding="utf-8")
     print(f"Saved: {filename}")
