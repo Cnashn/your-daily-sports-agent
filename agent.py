@@ -316,15 +316,16 @@ def build_prompt(priority, context):
     recent_entries = get_recent_entries()
 
     transfer_check = "Before writing, do at least one search for recent transfer news: Real Madrid, Fenerbahçe, Galatasaray, and Beşiktaş specifically, plus any major transfer out of the top 5 European leagues (Premier League, La Liga, Serie A, Bundesliga, Ligue 1), whenever a transfer window is realistically open. Also check for any major NBA trade that reshapes a team's or a contender's outlook, LeBron included. The structured data never surfaces any of this on its own."
+    injury_check = "Separately, check for injury news on Real Madrid, Fenerbahçe, and the Turkey squad, plus the followed NBA players. An injury to a key player changes how a match or game should be read, so weave it into the analysis wherever it's relevant rather than treating it as a side note, regardless of today's priority."
 
     priority_instructions = {
-        "turkey": f"The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real. {transfer_check} Today, transfer/trade talk is background at most, a passing line if anything.",
-        "major_tournament": f"A major international tournament is active. Make it the centerpiece of today's entry. Drama, stakes, sharp takes. {transfer_check} Treat it as a secondary aside today, not the lead.",
-        "derby": f"There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result. {transfer_check} Only bring it in if it's directly relevant to one of the derby sides, otherwise skip it today.",
-        "team_news": f"Focus on Fenerbahçe and/or Real Madrid. What's happening with the team, key players like Arda Güler and Mbappé? {transfer_check} This is a natural day to give transfer news real space alongside the team news.",
-        "european": f"European football is the main dish today. UCL or UEL action takes priority. {transfer_check} Transfer talk can share space with today's match if there's something worth saying.",
-        "nba_active": f"NBA is active (playoffs or regular season). Give basketball real weight today alongside football. {transfer_check} A major trade fits naturally here alongside the game coverage.",
-        "quiet": f"It's a quiet day in sports. Write a fun historical piece — pick a memorable moment from sports history that happened on or around this date (any year), or share a fascinating fact about one of the followed teams or players. Be creative and specific. {transfer_check} On a quiet day like this, transfer or trade news is a strong candidate to lead with instead of the historical piece, if you find something worth it.",
+        "turkey": f"The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real. {transfer_check} {injury_check} Today, transfer/trade talk is background at most, a passing line if anything.",
+        "major_tournament": f"A major international tournament is active. Make it the centerpiece of today's entry. Drama, stakes, sharp takes. {transfer_check} {injury_check} Treat transfer/trade talk as a secondary aside today, not the lead.",
+        "derby": f"There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result. {transfer_check} {injury_check} Only bring transfer/trade talk in if it's directly relevant to one of the derby sides, otherwise skip it today.",
+        "team_news": f"Focus on Fenerbahçe and/or Real Madrid. What's happening with the team, key players like Arda Güler and Mbappé? {transfer_check} {injury_check} This is a natural day to give transfer news real space alongside the team news.",
+        "european": f"European football is the main dish today. UCL or UEL action takes priority. {transfer_check} {injury_check} Transfer talk can share space with today's match if there's something worth saying.",
+        "nba_active": f"NBA is active (playoffs or regular season). Give basketball real weight today alongside football. {transfer_check} {injury_check} A major trade fits naturally here alongside the game coverage.",
+        "quiet": f"It's a quiet day in sports. Write a fun historical piece — pick a memorable moment from sports history that happened on or around this date (any year), or share a fascinating fact about one of the followed teams or players. Be creative and specific. {transfer_check} {injury_check} On a quiet day like this, transfer, trade, or injury news is a strong candidate to lead with instead of the historical piece, if you find something worth it.",
     }
 
     instruction = priority_instructions.get(priority, priority_instructions["quiet"])
