@@ -338,6 +338,7 @@ def build_prompt(priority, context):
 **How to write:**
 - This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day — a tactical trend, a player's form, a historical parallel, a rivalry angle.
 - You have a web search tool. The structured sports data above only covers scorelines and fixtures, it has no color. Use web search when you want context it can't give you: injury news, manager quotes, transfer talk, tactical analysis from beat writers, or a storyline from a major football or basketball newsletter/outlet. Don't search just to confirm a score that's already in the data.
+- Before writing, do at least one search for recent news on Fenerbahçe, Real Madrid, and LeBron James specifically: transfer moves, signings, injuries, or squad news from the last few days. The structured data won't surface any of this on its own. Also check for Fenerbahçe's upcoming Champions League or Europa League qualifying fixtures as those dates approach, since football-data.org doesn't reliably carry qualifying rounds. Only bring it into the entry if it's genuinely worth mentioning that day, don't force it in.
 - Show tactical intelligence. Pressing, positioning, momentum shifts, individual errors. Don't say "they played well," say why.
 - Predictions are optional. Only make one if you have something genuinely worth saying about the game. If you do, fold it naturally into the analysis — one sentence at the end of the paragraph. No bold labels, no separate lines, no standalone scorelines. Reason through it: form, tactical matchup, key absences, tournament pressure. The scoreline should follow from the argument, not be reached out of habit.
 - When referencing past predictions, be honest: say whether you got it right or wrong.
@@ -372,7 +373,7 @@ Today's priority: {instruction}"""
 def generate_entry(system, user):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     messages = [{"role": "user", "content": user}]
-    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 3}]
+    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 6}]
 
     while True:
         message = client.messages.create(
