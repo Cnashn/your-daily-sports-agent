@@ -315,17 +315,16 @@ def build_prompt(priority, context):
     entry_number = get_entry_number()
     recent_entries = get_recent_entries()
 
-    transfer_check = "Before writing, do at least one search for recent transfer news: Real Madrid, Fenerbahçe, Galatasaray, and Beşiktaş specifically, plus any major transfer out of the top 5 European leagues (Premier League, La Liga, Serie A, Bundesliga, Ligue 1), whenever a transfer window is realistically open. Also check for any major NBA trade that reshapes a team's or a contender's outlook, LeBron included. The structured data never surfaces any of this on its own."
-    injury_check = "Separately, check for injury news on Real Madrid, Fenerbahçe, and the Turkey squad, plus the followed NBA players. An injury to a key player changes how a match or game should be read, so weave it into the analysis wherever it's relevant rather than treating it as a side note, regardless of today's priority."
+    news_check = "You get exactly 1 web search for the whole entry, spend it wisely. If you use it, spend it on a single combined query for whatever is most likely to matter today: transfer/trade news (Real Madrid, Fenerbahçe, Galatasaray, Beşiktaş, the top 5 European leagues, or a major NBA trade including LeBron) or injury news (Real Madrid, Fenerbahçe, Turkey squad, followed NBA players). Pick whichever angle is more likely to be relevant given today's priority, don't try to cover both. Skip the search entirely if the structured data and your own knowledge are already enough to write a good entry."
 
     priority_instructions = {
-        "turkey": f"The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real. {transfer_check} {injury_check} Today, transfer/trade talk is background at most, a passing line if anything.",
-        "major_tournament": f"A major international tournament is active. Make it the centerpiece of today's entry. Drama, stakes, sharp takes. {transfer_check} {injury_check} Treat transfer/trade talk as a secondary aside today, not the lead.",
-        "derby": f"There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result. {transfer_check} {injury_check} Only bring transfer/trade talk in if it's directly relevant to one of the derby sides, otherwise skip it today.",
-        "team_news": f"Focus on Fenerbahçe and/or Real Madrid. What's happening with the team, key players like Arda Güler and Mbappé? {transfer_check} {injury_check} This is a natural day to give transfer news real space alongside the team news.",
-        "european": f"European football is the main dish today. UCL or UEL action takes priority. {transfer_check} {injury_check} Transfer talk can share space with today's match if there's something worth saying.",
-        "nba_active": f"NBA is active (playoffs or regular season). Give basketball real weight today alongside football. {transfer_check} {injury_check} A major trade fits naturally here alongside the game coverage.",
-        "quiet": f"It's a quiet day in sports. Write a fun historical piece — pick a memorable moment from sports history that happened on or around this date (any year), or share a fascinating fact about one of the followed teams or players. Be creative and specific. {transfer_check} {injury_check} On a quiet day like this, transfer, trade, or injury news is a strong candidate to lead with instead of the historical piece, if you find something worth it.",
+        "turkey": f"The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real. {news_check} Today, transfer/trade talk is background at most, a passing line if anything.",
+        "major_tournament": f"A major international tournament is active. Make it the centerpiece of today's entry. Drama, stakes, sharp takes. {news_check} Treat transfer/trade talk as a secondary aside today, not the lead.",
+        "derby": f"There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result. {news_check} Only bring transfer/trade talk in if it's directly relevant to one of the derby sides, otherwise skip it today.",
+        "team_news": f"Focus on Fenerbahçe and/or Real Madrid. What's happening with the team, key players like Arda Güler and Mbappé? {news_check} This is a natural day to give transfer news real space alongside the team news.",
+        "european": f"European football is the main dish today. UCL or UEL action takes priority. {news_check} Transfer talk can share space with today's match if there's something worth saying.",
+        "nba_active": f"NBA is active (playoffs or regular season). Give basketball real weight today alongside football. {news_check} A major trade fits naturally here alongside the game coverage.",
+        "quiet": f"It's a quiet day in sports. Write a fun historical piece — pick a memorable moment from sports history that happened on or around this date (any year), or share a fascinating fact about one of the followed teams or players. Be creative and specific. {news_check} On a quiet day like this, transfer, trade, or injury news is a strong candidate to lead with instead of the historical piece, if you find something worth it.",
     }
 
     instruction = priority_instructions.get(priority, priority_instructions["quiet"])
@@ -352,7 +351,7 @@ def build_prompt(priority, context):
 
 **Hard rules:**
 - Keep entries between 150 and 250 words. Short, sharp, no padding.
-- Never use em dashes. Use commas, periods, or restructure.
+- Never use em dashes (—) anywhere in the entry, not even one. This is the single most important formatting rule you have. Use commas, periods, or restructure the sentence. Before you finish, reread your entry and if you find a —, rewrite that sentence without it.
 - Never invent fixtures or results. Only write a specific scoreline if it is explicitly in the data provided. If a result happened but the score is not in the data, describe it in words (won, lost, drew) rather than guessing a number.
 - When a match goes to a penalty shootout, the score to reference is the 90-minute or extra time result. Describe the penalty outcome in prose. Never write the penalty score as if it were the match result.
 - Before writing about a match that also appears in the previous entries provided, check what was already said about it. Keep any scoreline or result consistent with that account, don't restate it as if new, and don't invent extra details (like a different scoreline) to make it feel fresh.
@@ -375,7 +374,7 @@ Today's priority: {instruction}"""
 def generate_entry(system, user):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     messages = [{"role": "user", "content": user}]
-    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 10}]
+    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 1}]
 
     while True:
         message = client.messages.create(
