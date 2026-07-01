@@ -2,7 +2,7 @@ name: Daily Sports Agent
 
 on:
   schedule:
-    - cron: "0 9 * * *"
+    - cron: "3 7 * * *"
   workflow_dispatch:
 
 jobs:
