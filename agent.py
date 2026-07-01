@@ -315,14 +315,16 @@ def build_prompt(priority, context):
     entry_number = get_entry_number()
     recent_entries = get_recent_entries()
 
+    transfer_check = "Before writing, do at least one search for recent transfer news: Real Madrid, Fenerbahçe, Galatasaray, and Beşiktaş specifically, plus any major transfer out of the top 5 European leagues (Premier League, La Liga, Serie A, Bundesliga, Ligue 1), whenever a transfer window is realistically open. Also check for any major NBA trade that reshapes a team's or a contender's outlook, LeBron included. The structured data never surfaces any of this on its own."
+
     priority_instructions = {
-        "turkey": "The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real.",
-        "major_tournament": "A major international tournament is active. Make it the centerpiece of today's entry. Drama, stakes, sharp takes.",
-        "derby": "There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result.",
-        "team_news": "Focus on Fenerbahçe and/or Real Madrid. What's happening with the team, key players like Arda Güler and Mbappé?",
-        "european": "European football is the main dish today. UCL or UEL action takes priority.",
-        "nba_active": "NBA is active (playoffs or regular season). Give basketball real weight today alongside football.",
-        "quiet": "It's a quiet day in sports. Write a fun historical piece — pick a memorable moment from sports history that happened on or around this date (any year), or share a fascinating fact about one of the followed teams or players. Be creative and specific.",
+        "turkey": f"The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real. {transfer_check} Today, transfer/trade talk is background at most, a passing line if anything.",
+        "major_tournament": f"A major international tournament is active. Make it the centerpiece of today's entry. Drama, stakes, sharp takes. {transfer_check} Treat it as a secondary aside today, not the lead.",
+        "derby": f"There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result. {transfer_check} Only bring it in if it's directly relevant to one of the derby sides, otherwise skip it today.",
+        "team_news": f"Focus on Fenerbahçe and/or Real Madrid. What's happening with the team, key players like Arda Güler and Mbappé? {transfer_check} This is a natural day to give transfer news real space alongside the team news.",
+        "european": f"European football is the main dish today. UCL or UEL action takes priority. {transfer_check} Transfer talk can share space with today's match if there's something worth saying.",
+        "nba_active": f"NBA is active (playoffs or regular season). Give basketball real weight today alongside football. {transfer_check} A major trade fits naturally here alongside the game coverage.",
+        "quiet": f"It's a quiet day in sports. Write a fun historical piece — pick a memorable moment from sports history that happened on or around this date (any year), or share a fascinating fact about one of the followed teams or players. Be creative and specific. {transfer_check} On a quiet day like this, transfer or trade news is a strong candidate to lead with instead of the historical piece, if you find something worth it.",
     }
 
     instruction = priority_instructions.get(priority, priority_instructions["quiet"])
@@ -338,7 +340,6 @@ def build_prompt(priority, context):
 **How to write:**
 - This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day — a tactical trend, a player's form, a historical parallel, a rivalry angle.
 - You have a web search tool. The structured sports data above only covers scorelines and fixtures, it has no color. Use web search when you want context it can't give you: injury news, manager quotes, transfer talk, tactical analysis from beat writers, or a storyline from a major football or basketball newsletter/outlet. Don't search just to confirm a score that's already in the data.
-- Before writing, do at least one search for recent transfer news: Real Madrid, Fenerbahçe, Galatasaray, and Beşiktaş specifically, plus any major transfer out of the top 5 European leagues (Premier League, La Liga, Serie A, Bundesliga, Ligue 1) worth talking about, whenever a transfer window is realistically open. Also check for any major NBA trade that reshapes a team's or a contender's outlook, LeBron included. The structured data never surfaces any of this on its own. Only bring it into the entry if it's genuinely worth mentioning that day, don't force it in, and never let it outrank today's priority below.
 - Show tactical intelligence. Pressing, positioning, momentum shifts, individual errors. Don't say "they played well," say why.
 - Predictions are optional. Only make one if you have something genuinely worth saying about the game. If you do, fold it naturally into the analysis — one sentence at the end of the paragraph. No bold labels, no separate lines, no standalone scorelines. Reason through it: form, tactical matchup, key absences, tournament pressure. The scoreline should follow from the argument, not be reached out of habit.
 - When referencing past predictions, be honest: say whether you got it right or wrong.
