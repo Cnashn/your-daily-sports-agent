@@ -384,7 +384,7 @@ def get_recent_entries(n=5):
     journal_dir = Path("journal")
     if not journal_dir.exists():
         return ""
-    files = sorted(journal_dir.glob("*.md"), key=lambda f: datetime.strptime(f.stem, "%d-%m-%y"))
+    files = sorted(journal_dir.glob("*.md"), key=lambda f: datetime.strptime(f.stem, "%y-%m-%d"))
     recent = files[-n:] if len(files) >= n else files
     parts = []
     for f in recent:
@@ -476,7 +476,7 @@ def generate_commit_message(entry):
 def save_entry(entry):
     journal_dir = Path("journal")
     journal_dir.mkdir(exist_ok=True)
-    filename = journal_dir / f"{today.strftime('%d-%m-%y')}.md"
+    filename = journal_dir / f"{today.strftime('%y-%m-%d')}.md"
     date_str = today.strftime("%d/%m/%y")
     content = f"# {date_str}\n\n{entry}\n"
     filename.write_text(content, encoding="utf-8")
