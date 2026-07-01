@@ -8,17 +8,9 @@ import anthropic
 FOOTBALL_API_KEY = os.environ["FOOTBALL_DATA_API_KEY"]
 BALLDONTLIE_API_KEY = os.environ["BALLDONTLIE_API_KEY"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-API_FOOTBALL_KEY = os.environ["API_FOOTBALL_KEY"]
 
 FOOTBALL_BASE = "https://api.football-data.org/v4"
 BALLDONTLIE_BASE = "https://api.balldontlie.io/v1"
-API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
-
-API_FOOTBALL_TEAMS = {
-    "Real Madrid": 541,
-    "Fenerbahçe": 635,
-    "Turkey": 21,
-}
 
 with open("config.json") as f:
     CONFIG = json.load(f)
@@ -34,76 +26,6 @@ def football_headers():
 
 def balldontlie_headers():
     return {"Authorization": BALLDONTLIE_API_KEY}
-
-
-def api_football_headers():
-    return {"x-apisports-key": API_FOOTBALL_KEY}
-
-
-def get_player_stats_for_team(team_id, team_name):
-    try:
-        r = requests.get(
-            f"{API_FOOTBALL_BASE}/fixtures",
-            headers=api_football_headers(),
-            params={"team": team_id, "last": 1},
-            timeout=10,
-        )
-        if r.status_code != 200:
-            return ""
-        fixtures = r.json().get("response", [])
-        if not fixtures:
-            return ""
-        fixture = fixtures[0]
-        fixture_date = fixture["fixture"]["date"][:10]
-        if fixture_date < str(yesterday):
-            return ""
-        fixture_id = fixture["fixture"]["id"]
-        home = fixture["teams"]["home"]["name"]
-        away = fixture["teams"]["away"]["name"]
-        score = fixture["goals"]
-
-        pr = requests.get(
-            f"{API_FOOTBALL_BASE}/fixtures/players",
-            headers=api_football_headers(),
-            params={"fixture": fixture_id, "team": team_id},
-            timeout=10,
-        )
-        if pr.status_code != 200:
-            return ""
-        players_data = pr.json().get("response", [])
-        if not players_data:
-            return ""
-
-        lines = [f"{team_name} match: {home} {score['home']}-{score['away']} {away}"]
-        for team_block in players_data:
-            for p in team_block.get("players", []):
-                name = p["player"]["name"]
-                stats = p["statistics"][0] if p.get("statistics") else {}
-                goals = stats.get("goals", {}).get("total") or 0
-                assists = stats.get("goals", {}).get("assists") or 0
-                rating = stats.get("games", {}).get("rating")
-                minutes = stats.get("games", {}).get("minutes") or 0
-                if minutes > 0:
-                    line = f"  {name}: {minutes}min"
-                    if goals:
-                        line += f", {goals}G"
-                    if assists:
-                        line += f", {assists}A"
-                    if rating:
-                        line += f", rating {float(rating):.1f}"
-                    lines.append(line)
-        return "\n".join(lines)
-    except Exception:
-        return ""
-
-
-def get_all_player_stats():
-    parts = []
-    for team_name, team_id in API_FOOTBALL_TEAMS.items():
-        stats = get_player_stats_for_team(team_id, team_name)
-        if stats:
-            parts.append(stats)
-    return "\n\n".join(parts)
 
 
 def get_active_major_tournament():
@@ -341,10 +263,6 @@ def build_context():
     rival_drops = get_rival_results()
     if rival_drops:
         sections.append("RIVALS DROPPED POINTS:\n" + "\n".join(rival_drops))
-
-    player_stats = get_all_player_stats()
-    if player_stats:
-        sections.append("PLAYER STATS (highlight whoever performed interestingly, not just the usual names):\n" + player_stats)
 
     nba_games = get_nba_games()
     lebron_stats = get_lebron_stats()
