@@ -375,7 +375,7 @@ Today's priority: {instruction}"""
 def generate_entry(system, user):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     messages = [{"role": "user", "content": user}]
-    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 6}]
+    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 10}]
 
     while True:
         message = client.messages.create(
