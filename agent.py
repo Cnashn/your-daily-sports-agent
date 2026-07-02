@@ -1,4 +1,7 @@
 import os
+import re
+import sys
+import time
 import json
 import requests
 from datetime import datetime, timedelta, timezone
@@ -24,6 +27,23 @@ def football_headers():
     return {"X-Auth-Token": FOOTBALL_API_KEY}
 
 
+def fd_get(path, params=None):
+    for attempt in range(2):
+        r = requests.get(
+            f"{FOOTBALL_BASE}{path}",
+            headers=football_headers(),
+            params=params,
+            timeout=10,
+        )
+        if r.status_code == 429 and attempt == 0:
+            wait = int(r.headers.get("X-RequestCounter-Reset", 60)) + 1
+            print(f"[warn] football-data rate limited, waiting {wait}s")
+            time.sleep(min(wait, 65))
+            continue
+        return r
+    return r
+
+
 def balldontlie_headers():
     return {"Authorization": BALLDONTLIE_API_KEY}
 
@@ -31,11 +51,9 @@ def balldontlie_headers():
 def get_active_major_tournament():
     for comp in CONFIG["football"]["competitions"]["tier1"]:
         try:
-            r = requests.get(
-                f"{FOOTBALL_BASE}/competitions/{comp['id']}/matches",
-                headers=football_headers(),
+            r = fd_get(
+                f"/competitions/{comp['id']}/matches",
                 params={"dateFrom": str(yesterday), "dateTo": str(in_3_days)},
-                timeout=10,
             )
             if r.status_code == 200:
                 matches = r.json().get("matches", [])
@@ -48,11 +66,9 @@ def get_active_major_tournament():
 
 def get_team_matches(team_id, team_name):
     try:
-        r = requests.get(
-            f"{FOOTBALL_BASE}/teams/{team_id}/matches",
-            headers=football_headers(),
+        r = fd_get(
+            f"/teams/{team_id}/matches",
             params={"dateFrom": str(yesterday), "dateTo": str(in_3_days), "limit": 5},
-            timeout=10,
         )
         if r.status_code == 200:
             return r.json().get("matches", [])
@@ -63,11 +79,9 @@ def get_team_matches(team_id, team_name):
 
 def get_competition_matches(comp_id):
     try:
-        r = requests.get(
-            f"{FOOTBALL_BASE}/competitions/{comp_id}/matches",
-            headers=football_headers(),
+        r = fd_get(
+            f"/competitions/{comp_id}/matches",
             params={"dateFrom": str(yesterday), "dateTo": str(in_3_days)},
-            timeout=10,
         )
         if r.status_code == 200:
             return r.json().get("matches", [])
@@ -98,11 +112,9 @@ def is_upcoming_derby():
 
 def get_turkey_matches():
     try:
-        r = requests.get(
-            f"{FOOTBALL_BASE}/teams/803/matches",
-            headers=football_headers(),
+        r = fd_get(
+            "/teams/803/matches",
             params={"dateFrom": str(today - timedelta(days=30)), "dateTo": str(in_3_days), "limit": 10},
-            timeout=10,
         )
         if r.status_code == 200:
             matches = r.json().get("matches", [])
@@ -119,11 +131,9 @@ def get_rival_results():
     for team_id_str, rivals in rivals_config.items():
         for rival in rivals:
             try:
-                r = requests.get(
-                    f"{FOOTBALL_BASE}/teams/{rival['id']}/matches",
-                    headers=football_headers(),
+                r = fd_get(
+                    f"/teams/{rival['id']}/matches",
                     params={"dateFrom": str(yesterday), "dateTo": str(today), "limit": 3},
-                    timeout=10,
                 )
                 if r.status_code == 200:
                     for m in r.json().get("matches", []):
@@ -195,6 +205,14 @@ def get_nba_season_type():
     return "off-season"
 
 
+def format_stage(stage):
+    if not stage or stage == "REGULAR_SEASON":
+        return ""
+    if stage.startswith("LAST_"):
+        return f"Round of {stage.split('_')[1]}"
+    return stage.replace("_", " ").title()
+
+
 def format_match(m):
     home = m.get("homeTeam", {}).get("name", "?")
     away = m.get("awayTeam", {}).get("name", "?")
@@ -205,11 +223,25 @@ def format_match(m):
     status = m.get("status", "")
     date_str = m.get("utcDate", "")[:10]
     comp = m.get("competition", {}).get("name", "")
+    stage = format_stage(m.get("stage", ""))
+    label = f"{comp}, {stage}" if stage else comp
 
     if status == "FINISHED" and home_score is not None:
-        return f"{home} {home_score}-{away_score} {away} [{comp}]"
+        duration = score.get("duration", "REGULAR")
+        note = ""
+        if duration == "EXTRA_TIME":
+            note = " (after extra time)"
+        elif duration == "PENALTY_SHOOTOUT":
+            reg = score.get("regularTime", {})
+            et = score.get("extraTime", {})
+            home_score = (reg.get("home") or 0) + (et.get("home") or 0)
+            away_score = (reg.get("away") or 0) + (et.get("away") or 0)
+            pens = score.get("penalties", {})
+            winner = home if m.get("score", {}).get("winner") == "HOME_TEAM" else away
+            note = f" ({winner} win {pens.get('home')}-{pens.get('away')} on penalties)"
+        return f"{home} {home_score}-{away_score} {away} [{label}]{note}"
     else:
-        return f"{home} vs {away} on {date_str} [{comp}]"
+        return f"{home} vs {away} on {date_str} [{label}]"
 
 
 def build_context():
@@ -310,12 +342,15 @@ def get_recent_entries(n=5):
     return "\n\n---\n\n".join(parts)
 
 
-def build_prompt(priority, context):
+def build_prompt(priority, context, use_search):
     date_str = today.strftime("%-d %B %Y")
     entry_number = get_entry_number()
     recent_entries = get_recent_entries()
 
-    news_check = "You get exactly 1 web search for the whole entry, spend it wisely. If you use it, spend it on a single combined query for whatever is most likely to matter today: transfer/trade news (Real Madrid, Fenerbahçe, Galatasaray, Beşiktaş, the top 5 European leagues, or a major NBA trade including LeBron) or injury news (Real Madrid, Fenerbahçe, Turkey squad, followed NBA players). Pick whichever angle is more likely to be relevant given today's priority, don't try to cover both. Skip the search entirely if the structured data and your own knowledge are already enough to write a good entry."
+    if use_search:
+        news_check = "You get exactly 1 web search for the whole entry, spend it wisely. If you use it, spend it on a single combined query for whatever is most likely to matter today: transfer/trade news (Real Madrid, Fenerbahçe, Galatasaray, Beşiktaş, the top 5 European leagues, or a major NBA trade including LeBron) or injury news (Real Madrid, Fenerbahçe, Turkey squad, followed NBA players). Pick whichever angle is more likely to be relevant given today's priority, don't try to cover both. Skip the search entirely if the structured data and your own knowledge are already enough to write a good entry."
+    else:
+        news_check = "You have no news access today. Do not claim any current transfer, injury or lineup news, and do not present remembered news as recent. Write from the match data, the previous entries and history you are certain of."
 
     priority_instructions = {
         "turkey": f"The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real. {news_check} Today, transfer/trade talk is background at most, a passing line if anything.",
@@ -339,7 +374,7 @@ def build_prompt(priority, context):
 
 **How to write:**
 - This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day — a tactical trend, a player's form, a historical parallel, a rivalry angle.
-- You have a web search tool. The structured sports data above only covers scorelines and fixtures, it has no color. Use web search when you want context it can't give you: injury news, manager quotes, transfer talk, tactical analysis from beat writers, or a storyline from a major football or basketball newsletter/outlet. Don't search just to confirm a score that's already in the data.
+{"- You have a web search tool. The structured sports data above only covers scorelines and fixtures, it has no color. Use web search when you want context it can't give you: injury news, manager quotes, transfer talk, tactical analysis from beat writers, or a storyline from a major football or basketball newsletter/outlet. Don't search just to confirm a score that's already in the data." if use_search else "- You have no web access today. The structured data and previous entries are your only sources for anything current."}
 - Show tactical intelligence. Pressing, positioning, momentum shifts, individual errors. Don't say "they played well," say why.
 - Predictions are optional. Only make one if you have something genuinely worth saying about the game. If you do, fold it naturally into the analysis — one sentence at the end of the paragraph. No bold labels, no separate lines, no standalone scorelines. Reason through it: form, tactical matchup, key absences, tournament pressure. The scoreline should follow from the argument, not be reached out of habit.
 - When referencing past predictions, be honest: say whether you got it right or wrong.
@@ -353,6 +388,7 @@ def build_prompt(priority, context):
 - Keep entries between 150 and 250 words. Short, sharp, no padding.
 - Never use em dashes (—) anywhere in the entry, not even one. This is the single most important formatting rule you have. Use commas, periods, or restructure the sentence. Before you finish, reread your entry and if you find a —, rewrite that sentence without it.
 - Never invent fixtures or results. Only write a specific scoreline if it is explicitly in the data provided. If a result happened but the score is not in the data, describe it in words (won, lost, drew) rather than guessing a number.
+- The structured data contains no player-level information: no scorers, no assists, no lineups. Never credit a named player with a specific in-match action (a goal, an assist, a save, a red card, being the match's difference-maker) unless that fact comes from this run's web search results. Without grounded player facts, write about the match at the team and tactics level. General remarks about a player's form, reputation or transfer situation are fine.
 - When a match goes to a penalty shootout, the score to reference is the 90-minute or extra time result. Describe the penalty outcome in prose. Never write the penalty score as if it were the match result.
 - Before writing about a match that also appears in the previous entries provided, check what was already said about it. Keep any scoreline or result consistent with that account, don't restate it as if new, and don't invent extra details (like a different scoreline) to make it feel fresh.
 - Don't slap "underdog" or "surprise" on a team just because they won a knockout match. Judge it on the actual gap in quality: a team with a strong squad or pedigree beating a good side isn't an upset. Reserve "shock" language for results where the gap in quality or ranking was real.
@@ -362,6 +398,7 @@ def build_prompt(priority, context):
 - Do not start your response with a date heading or entry number heading. Never write a line like "30/06/26" or "30/06/26 — Entry 2" at the top. The heading is added automatically.
 - Write in first person throughout. "I", "my", "me." This is a personal journal, not a column or a broadcast.
 - Do not open with "Today's..." or any variation. Just start writing.
+- Wrap the finished entry in <entry> and </entry> tags. Only the text inside the tags is published, everything outside is discarded. Keep any planning, notes or search commentary outside the tags.
 
 Today's priority: {instruction}"""
 
@@ -371,37 +408,178 @@ Today's priority: {instruction}"""
     return system, user
 
 
-def generate_entry(system, user):
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    messages = [{"role": "user", "content": user}]
-    tools = [{"type": "web_search_20260209", "name": "web_search", "max_uses": 1}]
+WRITER_MODEL = "claude-haiku-4-5-20251001"
+VERIFIER_MODEL = "claude-sonnet-5"
+AUX_MODEL = "claude-haiku-4-5-20251001"
+MAX_PAUSE_ITERATIONS = 6
 
-    while True:
-        message = client.messages.create(
-            model="claude-sonnet-5",
-            max_tokens=1024,
-            messages=messages,
-            system=system,
-            tools=tools,
-        )
-        if message.stop_reason == "pause_turn":
-            messages.append({"role": "assistant", "content": message.content})
+
+def log_usage(label, message, extra=""):
+    u = message.usage
+    print(
+        f"[usage] {label} stop={message.stop_reason} "
+        f"in={u.input_tokens} out={u.output_tokens} "
+        f"cache_read={u.cache_read_input_tokens or 0} "
+        f"cache_write={u.cache_creation_input_tokens or 0}{extra}"
+    )
+
+
+def extract_search_evidence(messages, final_message):
+    contents = [m["content"] for m in messages if m["role"] == "assistant"]
+    contents.append(final_message.content)
+    parts = []
+    for content in contents:
+        for block in content:
+            btype = getattr(block, "type", None)
+            if btype == "web_search_tool_result" and isinstance(block.content, list):
+                for r in block.content:
+                    title = getattr(r, "title", "") or ""
+                    url = getattr(r, "url", "") or ""
+                    parts.append(f"[search result] {title} ({url})")
+            elif btype == "text":
+                for c in getattr(block, "citations", None) or []:
+                    cited = getattr(c, "cited_text", None)
+                    if cited:
+                        parts.append(f"[cited] {cited.strip()}")
+    seen = set()
+    unique = []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return "\n".join(unique)
+
+
+def generate_entry(system, user, use_search):
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    kwargs = {}
+    if use_search:
+        kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}]
+
+    message = None
+    for max_tokens in (1024, 2048):
+        messages = [{"role": "user", "content": user}]
+        for iteration in range(1, MAX_PAUSE_ITERATIONS + 1):
+            message = client.messages.create(
+                model=WRITER_MODEL,
+                max_tokens=max_tokens,
+                messages=messages,
+                system=system,
+                **kwargs,
+            )
+            log_usage(f"entry iter={iteration}", message)
+            if message.stop_reason == "pause_turn":
+                messages.append({"role": "assistant", "content": message.content})
+                continue
+            break
+        if message.stop_reason == "max_tokens":
+            print(f"[warn] hit max_tokens={max_tokens}, retrying with a larger budget")
             continue
         break
 
-    return "".join(block.text for block in message.content if block.type == "text").strip()
+    if message.stop_reason == "max_tokens":
+        raise RuntimeError(
+            "entry generation hit max_tokens twice, refusing to save a truncated entry"
+        )
+
+    entry = extract_tagged_entry(message.content)
+    if not entry:
+        raise RuntimeError(
+            f"entry generation returned no usable text (stop_reason={message.stop_reason})"
+        )
+
+    evidence = extract_search_evidence(messages, message) if use_search else ""
+    return entry, evidence
+
+
+def extract_tagged_entry(content):
+    text = "".join(block.text for block in content if block.type == "text")
+    match = re.search(r"<entry>(.*?)</entry>", text, re.DOTALL)
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+    print("[warn] no <entry> tags in model output, falling back to text after last tool block")
+    last_tool = max(
+        (i for i, b in enumerate(content) if b.type != "text"),
+        default=-1,
+    )
+    return "".join(b.text for b in content[last_tool + 1:] if b.type == "text").strip()
+
+
+def verify_entry(entry, context, evidence):
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    prompt = f"""You are a factcheck gate for a daily sports journal. The writer only receives final scores, team names, competitions, stages and dates, plus its own previous entries and the web evidence below. It has no goalscorer, lineup or player-event data.
+
+STRUCTURED DATA GIVEN TO THE WRITER:
+{context or "none"}
+
+WEB SEARCH EVIDENCE FROM THIS RUN:
+{evidence or "none"}
+
+PREVIOUS ENTRIES THE WRITER CAN REFERENCE:
+{get_recent_entries() or "none"}
+
+ENTRY:
+{entry}
+
+Check the entry against these two rules:
+1. No claim may state that a named player performed a concrete action in a specific match (scored, assisted, made a save, got a card, single-handedly decided that match) unless it is supported by the structured data, the web evidence, or the previous entries above. All three sources are equally authoritative: if a previous entry states it, it is supported, do not second-guess the previous entry. Match annotations like "(after extra time)" or penalty notes in the structured data fully support extra time and shootout references. Nothing else about players is a violation: remarks about a player's form, mood, hunger, fitness, injury status, reputation, transfers, expectations, or predicted role in an upcoming match are all fine. When in doubt whether something is a concrete in-match action, it is not a violation.
+2. No statement may assign a match that appears in the structured data to a different competition stage than the data shows, such as describing a fixture labeled Round of 32/16, Quarter-Final, Semi-Final or Final as a group match or talking about group points or standings being at stake in that fixture. Referring back to a tournament's earlier rounds (group-stage results that already happened, covered in previous entries) is fine and never a violation. If a match does not appear in the structured data at all, do not flag it.
+
+Output format, strictly: if there are no violations, reply with exactly OK and nothing else. Otherwise output one line per violation, each starting with "- ", quoting the offending phrase and naming the rule broken. No preamble, no analysis, no other text."""
+
+    message = client.messages.create(
+        model=VERIFIER_MODEL,
+        max_tokens=800,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    log_usage("verify", message)
+    if message.stop_reason == "max_tokens":
+        print("[warn] verifier hit max_tokens, verdict unusable, skipping verification")
+        return []
+    text = "".join(b.text for b in message.content if b.type == "text").strip()
+    if text == "OK" or text.upper().startswith("OK"):
+        return []
+    violations = [line.strip("- ").strip() for line in text.splitlines() if line.strip().startswith("-")]
+    return violations or [text]
+
+
+def repair_entry(entry, violations):
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    bullets = "\n- ".join(violations)
+    prompt = f"""Edit this daily sports journal entry. A factcheck flagged these unsupported claims:
+- {bullets}
+
+Rewrite the entry so the flagged claims are gone. Change as little as possible: keep the first-person voice, structure and length, keep everything that was not flagged. Where a flagged claim credited a player with a match action, reframe it at the team level instead. Never use em dashes. Output the corrected entry wrapped in <entry> and </entry> tags, nothing else.
+
+ENTRY:
+{entry}"""
+
+    message = client.messages.create(
+        model=AUX_MODEL,
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    log_usage("repair", message)
+    if message.stop_reason == "max_tokens":
+        return None
+    text = "".join(b.text for b in message.content if b.type == "text")
+    match = re.search(r"<entry>(.*?)</entry>", text, re.DOTALL)
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+    return None
 
 
 def generate_commit_message(entry):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model=AUX_MODEL,
         max_tokens=30,
         messages=[{
             "role": "user",
             "content": f"Write a git commit message for this sports journal entry. 5 words max, punchy, captures the mood not the content. No punctuation, no quotes, no em dashes. Just the message.\n\n{entry}"
         }],
     )
+    log_usage("commit_msg", message)
     suffix = message.content[0].text.strip().strip('"').strip("'")
     return suffix
 
@@ -421,11 +599,29 @@ def save_entry(entry):
 
 
 def main():
+    dry_run = "--dry-run" in sys.argv
     print(f"Running daily sports agent for {today}")
     priority, context = build_context()
     print(f"Priority: {priority}")
-    system, user = build_prompt(priority, context)
-    entry = generate_entry(system, user)
+    use_search = priority in ("quiet", "team_news")
+    system, user = build_prompt(priority, context, use_search)
+    entry, evidence = generate_entry(system, user, use_search)
+
+    violations = verify_entry(entry, context, evidence)
+    if violations:
+        print("[warn] unsupported claims found, repairing:")
+        for v in violations:
+            print(f"  - {v}")
+        repaired = repair_entry(entry, violations)
+        if repaired:
+            entry = repaired
+        else:
+            print("[warn] repair failed, saving original draft")
+
+    if dry_run:
+        print("--- dry run, entry not saved ---")
+        print(entry)
+        return
     save_entry(entry)
     print("Done.")
 
