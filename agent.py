@@ -6,6 +6,7 @@ import json
 import requests
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 import anthropic
 
 FOOTBALL_API_KEY = os.environ["FOOTBALL_DATA_API_KEY"]
@@ -17,6 +18,8 @@ BALLDONTLIE_BASE = "https://api.balldontlie.io/v1"
 
 with open("config.json") as f:
     CONFIG = json.load(f)
+
+EASTERN = ZoneInfo("America/New_York")
 
 today = datetime.now(timezone.utc).date()
 yesterday = today - timedelta(days=1)
@@ -213,9 +216,18 @@ def format_stage(stage):
     return stage.replace("_", " ").title()
 
 
+def format_kickoff(utc_str):
+    try:
+        dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return utc_str[:10] if utc_str else "unknown date"
+    local = dt.astimezone(EASTERN)
+    return f"{local.strftime('%A %-d %B')} at {local.strftime('%-I:%M %p')} US Eastern ({dt.strftime('%H:%M')} UTC)"
+
+
 def format_match(m):
-    home = m.get("homeTeam", {}).get("name", "?")
-    away = m.get("awayTeam", {}).get("name", "?")
+    home = m.get("homeTeam", {}).get("name") or "TBD (opponent not decided yet)"
+    away = m.get("awayTeam", {}).get("name") or "TBD (opponent not decided yet)"
     score = m.get("score", {})
     full = score.get("fullTime", {})
     home_score = full.get("home")
@@ -239,9 +251,12 @@ def format_match(m):
             pens = score.get("penalties", {})
             winner = home if m.get("score", {}).get("winner") == "HOME_TEAM" else away
             note = f" ({winner} win {pens.get('home')}-{pens.get('away')} on penalties)"
-        return f"{home} {home_score}-{away_score} {away} [{label}]{note}"
-    else:
-        return f"{home} vs {away} on {date_str} [{label}]"
+        return f"FINISHED on {date_str}: {home} {home_score}-{away_score} {away} [{label}]{note}"
+    if status in ("IN_PLAY", "PAUSED"):
+        return f"IN PLAY RIGHT NOW: {home} vs {away} [{label}]"
+    if status in ("POSTPONED", "SUSPENDED", "CANCELLED"):
+        return f"{status.title()}: {home} vs {away} [{label}]"
+    return f"UPCOMING, NOT PLAYED YET: {home} vs {away}, kickoff {format_kickoff(m.get('utcDate', ''))} [{label}]"
 
 
 def build_context():
@@ -320,7 +335,17 @@ def build_context():
             priority = "nba_active"
         sections.append(f"NBA ({nba_season}):\n" + "\n".join(nba_lines))
 
-    return priority, "\n\n".join(sections) if sections else ""
+    if not sections:
+        return priority, ""
+
+    now_utc = datetime.now(timezone.utc)
+    now_eastern = now_utc.astimezone(EASTERN)
+    time_header = (
+        f"CURRENT TIME: {now_eastern.strftime('%A %-d %B %Y, %-I:%M %p')} US Eastern"
+        f" ({now_utc.strftime('%H:%M')} UTC)."
+        " Matches labeled FINISHED are over; matches labeled UPCOMING have not kicked off yet."
+    )
+    return priority, time_header + "\n\n" + "\n\n".join(sections)
 
 
 def get_entry_number():
@@ -388,6 +413,9 @@ def build_prompt(priority, context, use_search):
 - Keep entries between 150 and 250 words. Short, sharp, no padding.
 - Never use em dashes (—) anywhere in the entry, not even one. This is the single most important formatting rule you have. Use commas, periods, or restructure the sentence. Before you finish, reread your entry and if you find a —, rewrite that sentence without it.
 - Never invent fixtures or results. Only write a specific scoreline if it is explicitly in the data provided. If a result happened but the score is not in the data, describe it in words (won, lost, drew) rather than guessing a number.
+- The data starts with the current date and time, and every match is labeled either FINISHED (already played, with its date) or UPCOMING (not played yet, with its kickoff time). Only FINISHED matches have happened. Never write about an UPCOMING match as if it was played, never give it an outcome, never react to a result it does not have. Preview it as something still to come.
+- Never claim two teams already met in this tournament unless that match appears in the data or the previous entries. A meeting from a past tournament or season may only be referenced with the year or competition named, so it cannot be misread as part of this tournament.
+- Time words must match the data. Yesterday, today, tonight, tomorrow, or any countdown to kickoff has to line up with the CURRENT TIME line and the listed dates and kickoff times. If you say kickoff is some hours away, compute it from the current time. When in doubt, name the day and the kickoff time instead.
 - The structured data contains no player-level information: no scorers, no assists, no lineups. Never credit a named player with a specific in-match action (a goal, an assist, a save, a red card, being the match's difference-maker) unless that fact comes from this run's web search results. Without grounded player facts, write about the match at the team and tactics level. General remarks about a player's form, reputation or transfer situation are fine.
 - When a match goes to a penalty shootout, the score to reference is the 90-minute or extra time result. Describe the penalty outcome in prose. Never write the penalty score as if it were the match result.
 - Before writing about a match that also appears in the previous entries provided, check what was already said about it. Keep any scoreline or result consistent with that account, don't restate it as if new, and don't invent extra details (like a different scoreline) to make it feel fresh.
@@ -521,11 +549,14 @@ PREVIOUS ENTRIES THE WRITER CAN REFERENCE:
 ENTRY:
 {entry}
 
-Check the entry against these two rules:
+Check the entry against these rules:
 1. No claim may state that a named player performed a concrete action in a specific match (scored, assisted, made a save, got a card, single-handedly decided that match) unless it is supported by the structured data, the web evidence, or the previous entries above. All three sources are equally authoritative: if a previous entry states it, it is supported, do not second-guess the previous entry. Match annotations like "(after extra time)" or penalty notes in the structured data fully support extra time and shootout references. Nothing else about players is a violation: remarks about a player's form, mood, hunger, fitness, injury status, reputation, transfers, expectations, or predicted role in an upcoming match are all fine. When in doubt whether something is a concrete in-match action, it is not a violation.
-2. No statement may assign a match that appears in the structured data to a different competition stage than the data shows, such as describing a fixture labeled Round of 32/16, Quarter-Final, Semi-Final or Final as a group match or talking about group points or standings being at stake in that fixture. Referring back to a tournament's earlier rounds (group-stage results that already happened, covered in previous entries) is fine and never a violation. If a match does not appear in the structured data at all, do not flag it.
+2. No statement may assign a match that appears in the structured data to a different competition stage than the data shows, such as describing a fixture labeled Round of 32/16, Quarter-Final, Semi-Final or Final as a group match or talking about group points or standings being at stake in that fixture. Referring back to a tournament's earlier rounds (group-stage results that already happened, covered in previous entries) is fine and never a violation. If a match does not appear in the structured data at all, do not flag it under this rule.
+3. The structured data labels every match FINISHED or UPCOMING and begins with a CURRENT TIME line. Any statement that a match labeled UPCOMING has already been played, any result or outcome given for it, or any reaction to its supposed result, is a violation. Describing a match labeled FINISHED as still to be played is also a violation.
+4. Time references must be consistent with the CURRENT TIME line and the listed dates and kickoff times. Saying a match happened "yesterday" when the data shows a different date, or that kickoff is a number of hours away that does not fit the current time and the listed kickoff, is a violation.
+5. Any claim that two teams already faced each other in this tournament must be supported by the structured data, the web evidence, or the previous entries; otherwise it is a violation. A reference to a meeting in a past tournament or season is fine when the entry names the year or competition.
 
-Output format, strictly: if there are no violations, reply with exactly OK and nothing else. Otherwise output one line per violation, each starting with "- ", quoting the offending phrase and naming the rule broken. No preamble, no analysis, no other text."""
+Output format, strictly: if there are no violations, reply with exactly OK and nothing else. Otherwise output one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). No preamble, no analysis, no other text."""
 
     message = client.messages.create(
         model=VERIFIER_MODEL,
@@ -549,7 +580,7 @@ def repair_entry(entry, violations):
     prompt = f"""Edit this daily sports journal entry. A factcheck flagged these unsupported claims:
 - {bullets}
 
-Rewrite the entry so the flagged claims are gone. Change as little as possible: keep the first-person voice, structure and length, keep everything that was not flagged. Where a flagged claim credited a player with a match action, reframe it at the team level instead. Never use em dashes. Output the corrected entry wrapped in <entry> and </entry> tags, nothing else.
+Rewrite the entry so the flagged claims are gone. Change as little as possible: keep the first-person voice, structure and length, keep everything that was not flagged. Where a flagged claim credited a player with a match action, reframe it at the team level instead. Where a flagged claim treated an unplayed match as finished or invented a past meeting, rewrite that part as a preview of what is still to come, using the correct facts stated in the flags. Fix wrong days or countdowns with the corrected times in the flags. Never use em dashes. Output the corrected entry wrapped in <entry> and </entry> tags, nothing else.
 
 ENTRY:
 {entry}"""
