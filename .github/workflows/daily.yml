@@ -35,3 +35,10 @@ jobs:
           git add journal/
           git diff --cached --quiet || git commit -m "$(cat commit_msg.txt)"
           git push
+
+      - name: Post to Bluesky
+        continue-on-error: true
+        env:
+          BLUESKY_HANDLE: ${{ secrets.BLUESKY_HANDLE }}
+          BLUESKY_APP_PASSWORD: ${{ secrets.BLUESKY_APP_PASSWORD }}
+        run: python post_bluesky.py
