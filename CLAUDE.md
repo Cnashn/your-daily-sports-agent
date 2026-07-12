@@ -8,3 +8,14 @@
 - Never make geographic or continental claims about a group of teams unless every team in that group actually belongs there.
 - This is a daily sports journal, not a results board. Don't just list game results one after another. Write freely: analysis, opinions, historical tangents, player takes, anything — as long as it's factually correct.
 - Predictions are encouraged for upcoming matches. In future entries, referencing back to earlier predictions is allowed and welcome.
+- Write in first person, never use em dashes, don't repeat topics already covered in recent entries.
+- An entry must end complete. Before committing, check the text isn't cut off mid-sentence (max_tokens truncation has pushed unfinished entries before). If truncated, regenerate or raise the token limit, never push it as-is.
+
+## Testing & Costs
+- NEVER run the live agent (agent.py against real APIs) for testing or debugging without asking first. It burns Claude API credits and football-data rate limits. Use mocked API responses or a dry-run that skips LLM and HTTP calls.
+- Use both football APIs equally; don't hammer one until it rate-limits.
+- Model and max_tokens choices are cost decisions: ask before changing them.
+
+## Scheduling
+- Daily run is `.github/workflows/daily.yml` (GitHub Actions cron). Actions cron is queued, not exact: firing 15-120 min late is normal, not a bug. Check runs with `gh run list`/`gh run view --log` instead of asking me to report back.
+- Journal filenames must sort chronologically (year first), date headers in "7 July 2026" style.

@@ -24,6 +24,7 @@ EASTERN = ZoneInfo("America/New_York")
 today = datetime.now(timezone.utc).date()
 yesterday = today - timedelta(days=1)
 in_3_days = today + timedelta(days=3)
+in_7_days = today + timedelta(days=7)
 
 
 def football_headers():
@@ -56,7 +57,7 @@ def get_active_major_tournament():
         try:
             r = fd_get(
                 f"/competitions/{comp['id']}/matches",
-                params={"dateFrom": str(yesterday), "dateTo": str(in_3_days)},
+                params={"dateFrom": str(yesterday), "dateTo": str(in_7_days)},
             )
             if r.status_code == 200:
                 matches = r.json().get("matches", [])
@@ -225,6 +226,16 @@ def format_kickoff(utc_str):
     return f"{local.strftime('%A %-d %B')} at {local.strftime('%-I:%M %p')} US Eastern ({dt.strftime('%H:%M')} UTC)"
 
 
+def freshness(utc_str):
+    try:
+        dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return ""
+    if dt < datetime.now(timezone.utc) - timedelta(hours=24):
+        return " (OLD NEWS, already covered in a previous entry)"
+    return " (NEW since the last entry)"
+
+
 def format_match(m):
     home = m.get("homeTeam", {}).get("name") or "TBD (opponent not decided yet)"
     away = m.get("awayTeam", {}).get("name") or "TBD (opponent not decided yet)"
@@ -233,7 +244,7 @@ def format_match(m):
     home_score = full.get("home")
     away_score = full.get("away")
     status = m.get("status", "")
-    date_str = m.get("utcDate", "")[:10]
+    date_str = (m.get("utcDate") or "")[:10]
     comp = m.get("competition", {}).get("name", "")
     stage = format_stage(m.get("stage", ""))
     label = f"{comp}, {stage}" if stage else comp
@@ -251,7 +262,7 @@ def format_match(m):
             pens = score.get("penalties", {})
             winner = home if m.get("score", {}).get("winner") == "HOME_TEAM" else away
             note = f" ({winner} win {pens.get('home')}-{pens.get('away')} on penalties)"
-        return f"FINISHED on {date_str}: {home} {home_score}-{away_score} {away} [{label}]{note}"
+        return f"FINISHED on {date_str}: {home} {home_score}-{away_score} {away} [{label}]{note}{freshness(m.get('utcDate', ''))}"
     if status in ("IN_PLAY", "PAUSED"):
         return f"IN PLAY RIGHT NOW: {home} vs {away} [{label}]"
     if status in ("POSTPONED", "SUSPENDED", "CANCELLED"):
@@ -416,6 +427,11 @@ def build_prompt(priority, context, use_search):
 - The data starts with the current date and time, and every match is labeled either FINISHED (already played, with its date) or UPCOMING (not played yet, with its kickoff time). Only FINISHED matches have happened. Never write about an UPCOMING match as if it was played, never give it an outcome, never react to a result it does not have. Preview it as something still to come.
 - Never claim two teams already met in this tournament unless that match appears in the data or the previous entries. A meeting from a past tournament or season may only be referenced with the year or competition named, so it cannot be misread as part of this tournament.
 - Time words must match the data. Yesterday, today, tonight, tomorrow, or any countdown to kickoff has to line up with the CURRENT TIME line and the listed dates and kickoff times. If you say kickoff is some hours away, compute it from the current time. When in doubt, name the day and the kickoff time instead.
+- Getting a player's team or nationality wrong is the worst factual error this journal can make. Only name a player in connection with a team when you are completely certain the player actually plays for that team. When you are not certain which side a player belongs to, leave the player out and write at the team level.
+- Never state which opponent a winner advances to face, and never name a semifinal or final pairing, unless that exact fixture appears in the data with both teams named, or in this run's web search results. If the data shows a next-round fixture as TBD, say the opponent is not decided yet. Do not reconstruct the bracket from memory.
+- FINISHED matches marked OLD NEWS were already covered in a previous entry. Give such a match at most one short callback sentence, never the lead, and never re-analyze it as if it just happened. Build today's entry around the matches marked NEW and the upcoming fixtures.
+- Never make streak or aggregate claims (unbeaten, has not conceded, scored in every match) unless the data or previous entries support them, and never contradict a scoreline you mention yourself: a team that won 2-1 has conceded a goal.
+- If a previous entry conflicts with the structured data, the structured data wins. Never repeat a claim from a previous entry that the current data contradicts.
 - The structured data contains no player-level information: no scorers, no assists, no lineups. Never credit a named player with a specific in-match action (a goal, an assist, a save, a red card, being the match's difference-maker) unless that fact comes from this run's web search results. Without grounded player facts, write about the match at the team and tactics level. General remarks about a player's form, reputation or transfer situation are fine.
 - When a match goes to a penalty shootout, the score to reference is the 90-minute or extra time result. Describe the penalty outcome in prose. Never write the penalty score as if it were the match result.
 - Before writing about a match that also appears in the previous entries provided, check what was already said about it. Keep any scoreline or result consistent with that account, don't restate it as if new, and don't invent extra details (like a different scoreline) to make it feel fresh.
@@ -437,6 +453,7 @@ Today's priority: {instruction}"""
 
 
 WRITER_MODEL = "claude-haiku-4-5-20251001"
+TOURNAMENT_WRITER_MODEL = "claude-sonnet-5"
 VERIFIER_MODEL = "claude-sonnet-5"
 AUX_MODEL = "claude-haiku-4-5-20251001"
 MAX_PAUSE_ITERATIONS = 6
@@ -478,7 +495,7 @@ def extract_search_evidence(messages, final_message):
     return "\n".join(unique)
 
 
-def generate_entry(system, user, use_search):
+def generate_entry(system, user, use_search, model):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     kwargs = {}
     if use_search:
@@ -489,7 +506,7 @@ def generate_entry(system, user, use_search):
         messages = [{"role": "user", "content": user}]
         for iteration in range(1, MAX_PAUSE_ITERATIONS + 1):
             message = client.messages.create(
-                model=WRITER_MODEL,
+                model=model,
                 max_tokens=max_tokens,
                 messages=messages,
                 system=system,
@@ -555,18 +572,24 @@ Check the entry against these rules:
 3. The structured data labels every match FINISHED or UPCOMING and begins with a CURRENT TIME line. Any statement that a match labeled UPCOMING has already been played, any result or outcome given for it, or any reaction to its supposed result, is a violation. Describing a match labeled FINISHED as still to be played is also a violation.
 4. Time references must be consistent with the CURRENT TIME line and the listed dates and kickoff times. Saying a match happened "yesterday" when the data shows a different date, or that kickoff is a number of hours away that does not fit the current time and the listed kickoff, is a violation.
 5. Any claim that two teams already faced each other in this tournament must be supported by the structured data, the web evidence, or the previous entries; otherwise it is a violation. A reference to a meeting in a past tournament or season is fine when the entry names the year or competition.
+6. Any claim that a named player plays for, captains, or belongs to a specific national team must match reality as you know it. If you know the player represents a different country (for example a player attributed to the wrong national side), it is a violation; state the player's actual country in the flag. On this rule your own knowledge overrides the previous entries: an earlier entry repeating the same wrong affiliation does not make it supported, and national team affiliations never change. For club affiliations, only flag when you are confident the claim is wrong and it is not supported by the structured data, the web evidence, or the previous entries, since transfers may postdate your knowledge.
+7. Any claim about who a team will face in a later round, or any named semifinal or final pairing, must be supported by an UPCOMING fixture in the structured data (with both teams named) or by the web evidence. Previous entries are not sufficient support for bracket claims, because pairings change as results come in. If the entry asserts a future pairing found in neither source, it is a violation.
+8. Streak and aggregate claims (unbeaten, has not conceded, kept every clean sheet, scored in every match) must not contradict the scorelines in the structured data, the previous entries, or the entry itself. A team credited with a 2-1 win has conceded a goal; flag any claim that says otherwise.
 
 Output format, strictly: if there are no violations, reply with exactly OK and nothing else. Otherwise output one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). No preamble, no analysis, no other text."""
 
-    message = client.messages.create(
-        model=VERIFIER_MODEL,
-        max_tokens=800,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    log_usage("verify", message)
+    for max_tokens in (800, 1600):
+        message = client.messages.create(
+            model=VERIFIER_MODEL,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        log_usage("verify", message)
+        if message.stop_reason != "max_tokens":
+            break
+        print(f"[warn] verifier hit max_tokens={max_tokens}, retrying with a larger budget")
     if message.stop_reason == "max_tokens":
-        print("[warn] verifier hit max_tokens, verdict unusable, skipping verification")
-        return []
+        raise RuntimeError("verifier verdict truncated twice, refusing to publish unverified")
     text = "".join(b.text for b in message.content if b.type == "text").strip()
     if text == "OK" or text.upper().startswith("OK"):
         return []
@@ -580,7 +603,7 @@ def repair_entry(entry, violations):
     prompt = f"""Edit this daily sports journal entry. A factcheck flagged these unsupported claims:
 - {bullets}
 
-Rewrite the entry so the flagged claims are gone. Change as little as possible: keep the first-person voice, structure and length, keep everything that was not flagged. Where a flagged claim credited a player with a match action, reframe it at the team level instead. Where a flagged claim treated an unplayed match as finished or invented a past meeting, rewrite that part as a preview of what is still to come, using the correct facts stated in the flags. Fix wrong days or countdowns with the corrected times in the flags. Never use em dashes. Output the corrected entry wrapped in <entry> and </entry> tags, nothing else.
+Rewrite the entry so the flagged claims are gone. Change as little as possible: keep the first-person voice, structure and length, keep everything that was not flagged. Where a flagged claim credited a player with a match action, reframe it at the team level instead. Where a flagged claim put a player on the wrong team, use the correct team named in the flag or drop the player entirely. Where a flagged claim named a future pairing that is not actually set, rewrite it so the opponent stays open. Where a flagged claim treated an unplayed match as finished or invented a past meeting, rewrite that part as a preview of what is still to come, using the correct facts stated in the flags. Fix wrong days or countdowns with the corrected times in the flags. Never use em dashes. Output the corrected entry wrapped in <entry> and </entry> tags, nothing else.
 
 ENTRY:
 {entry}"""
@@ -635,19 +658,28 @@ def main():
     priority, context = build_context()
     print(f"Priority: {priority}")
     use_search = priority in ("quiet", "team_news")
+    writer_model = TOURNAMENT_WRITER_MODEL if priority == "major_tournament" else WRITER_MODEL
+    print(f"Writer model: {writer_model}")
     system, user = build_prompt(priority, context, use_search)
-    entry, evidence = generate_entry(system, user, use_search)
+    entry, evidence = generate_entry(system, user, use_search, writer_model)
 
     violations = verify_entry(entry, context, evidence)
-    if violations:
+    repairs = 0
+    while violations and repairs < 2:
         print("[warn] unsupported claims found, repairing:")
         for v in violations:
             print(f"  - {v}")
         repaired = repair_entry(entry, violations)
-        if repaired:
-            entry = repaired
-        else:
-            print("[warn] repair failed, saving original draft")
+        if not repaired:
+            break
+        entry = repaired
+        repairs += 1
+        violations = verify_entry(entry, context, evidence)
+    if violations:
+        raise RuntimeError(
+            "entry still fails factcheck after repairs, refusing to publish: "
+            + "; ".join(violations)
+        )
 
     if dry_run:
         print("--- dry run, entry not saved ---")
