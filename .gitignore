@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 commit_msg.txt
 graphify-out/
+.venv/
+.DS_Store
