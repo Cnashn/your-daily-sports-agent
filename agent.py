@@ -522,7 +522,7 @@ def generate_entry(system, user, use_search, model):
         kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}]
 
     message = None
-    for max_tokens in (1024, 2048):
+    for max_tokens in (2048, 3072):
         messages = [{"role": "user", "content": user}]
         for iteration in range(1, MAX_PAUSE_ITERATIONS + 1):
             message = client.messages.create(
@@ -598,7 +598,7 @@ Check the entry against these rules:
 
 Output format, strictly: if there are no violations, reply with exactly OK and nothing else. Otherwise output one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). No preamble, no analysis, no other text."""
 
-    for max_tokens in (800, 1600):
+    for max_tokens in (1600, 2400):
         message = client.messages.create(
             model=VERIFIER_MODEL,
             max_tokens=max_tokens,
