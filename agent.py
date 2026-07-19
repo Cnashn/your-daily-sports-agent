@@ -10,11 +10,11 @@ from zoneinfo import ZoneInfo
 import anthropic
 
 FOOTBALL_API_KEY = os.environ["FOOTBALL_DATA_API_KEY"]
-BALLDONTLIE_API_KEY = os.environ["BALLDONTLIE_API_KEY"]
+SPORTSAPI_KEY = os.environ["SPORTSAPIPRO_API_KEY"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 
 FOOTBALL_BASE = "https://api.football-data.org/v4"
-BALLDONTLIE_BASE = "https://api.balldontlie.io/v1"
+SPORTSAPI_BASE = "https://api.sportsapipro.com/v2/football"
 
 with open("config.json") as f:
     CONFIG = json.load(f)
@@ -48,8 +48,84 @@ def fd_get(path, params=None):
     return r
 
 
-def balldontlie_headers():
-    return {"Authorization": BALLDONTLIE_API_KEY}
+def sportsapi_get(path, params=None):
+    return requests.get(
+        f"{SPORTSAPI_BASE}{path}",
+        headers={
+            "x-api-key": SPORTSAPI_KEY,
+            # their edge returns 403 for default python user agents
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        },
+        params=params,
+        timeout=10,
+    )
+
+
+SAPI_STATUS = {
+    "finished": "FINISHED",
+    "inprogress": "IN_PLAY",
+    "notstarted": "TIMED",
+    "postponed": "POSTPONED",
+    "canceled": "CANCELLED",
+    "cancelled": "CANCELLED",
+}
+
+
+def convert_sapi_event(e):
+    status = e.get("status", {})
+    code = status.get("code", 0)
+    hs = e.get("homeScore", {})
+    aw = e.get("awayScore", {})
+
+    score = {
+        "fullTime": {"home": hs.get("current"), "away": aw.get("current")},
+        "duration": "REGULAR",
+    }
+    if code == 110:
+        score["duration"] = "EXTRA_TIME"
+    elif code == 120:
+        score["duration"] = "PENALTY_SHOOTOUT"
+        score["regularTime"] = {"home": hs.get("normaltime"), "away": aw.get("normaltime")}
+        score["extraTime"] = {"home": hs.get("overtime", 0), "away": aw.get("overtime", 0)}
+        score["penalties"] = {"home": hs.get("penalties"), "away": aw.get("penalties")}
+        score["winner"] = "HOME_TEAM" if e.get("winnerCode") == 1 else "AWAY_TEAM"
+
+    ts = e.get("startTimestamp")
+    utc_date = (
+        datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if ts
+        else ""
+    )
+
+    return {
+        "homeTeam": {"id": e.get("homeTeam", {}).get("id"), "name": e.get("homeTeam", {}).get("name")},
+        "awayTeam": {"id": e.get("awayTeam", {}).get("id"), "name": e.get("awayTeam", {}).get("name")},
+        "score": score,
+        "status": SAPI_STATUS.get(status.get("type", ""), "TIMED"),
+        "utcDate": utc_date,
+        "competition": {"name": e.get("tournament", {}).get("name", "")},
+        "stage": e.get("roundInfo", {}).get("name", ""),
+    }
+
+
+def get_sapi_team_matches(sapi_id):
+    try:
+        r = sportsapi_get(f"/api/teams/{sapi_id}/near-events")
+        if r.status_code != 200:
+            return []
+        data = r.json().get("data", {})
+        matches = []
+        for event in (data.get("previousEvent"), data.get("nextEvent")):
+            if not event:
+                continue
+            m = convert_sapi_event(event)
+            match_date = (m.get("utcDate") or "")[:10]
+            if match_date and str(yesterday) <= match_date <= str(in_3_days):
+                matches.append(m)
+        return matches
+    except Exception:
+        pass
+    return []
 
 
 def get_active_major_tournament():
@@ -135,78 +211,40 @@ def get_rival_results():
     for team_id_str, rivals in rivals_config.items():
         for rival in rivals:
             try:
-                r = fd_get(
-                    f"/teams/{rival['id']}/matches",
-                    params={"dateFrom": str(yesterday), "dateTo": str(today), "limit": 3},
-                )
-                if r.status_code == 200:
-                    for m in r.json().get("matches", []):
-                        if m.get("status") != "FINISHED":
-                            continue
-                        score = m.get("score", {}).get("fullTime", {})
-                        home_id = m.get("homeTeam", {}).get("id")
-                        away_id = m.get("awayTeam", {}).get("id")
-                        home_score = score.get("home", 0) or 0
-                        away_score = score.get("away", 0) or 0
-                        rival_is_home = home_id == rival["id"]
-                        rival_score = home_score if rival_is_home else away_score
-                        opp_score = away_score if rival_is_home else home_score
-                        if rival_score < opp_score or rival_score == opp_score:
-                            result = "lost" if rival_score < opp_score else "drew"
-                            dropped_points.append(
-                                f"{rival['name']} {result}: {format_match(m)}"
-                            )
+                if "sapi_id" in rival:
+                    rival_id = rival["sapi_id"]
+                    matches = [
+                        m for m in get_sapi_team_matches(rival["sapi_id"])
+                        if (m.get("utcDate") or "")[:10] <= str(today)
+                    ]
+                else:
+                    rival_id = rival["id"]
+                    matches = []
+                    r = fd_get(
+                        f"/teams/{rival['id']}/matches",
+                        params={"dateFrom": str(yesterday), "dateTo": str(today), "limit": 3},
+                    )
+                    if r.status_code == 200:
+                        matches = r.json().get("matches", [])
+                for m in matches:
+                    if m.get("status") != "FINISHED":
+                        continue
+                    score = m.get("score", {}).get("fullTime", {})
+                    home_id = m.get("homeTeam", {}).get("id")
+                    away_id = m.get("awayTeam", {}).get("id")
+                    home_score = score.get("home", 0) or 0
+                    away_score = score.get("away", 0) or 0
+                    rival_is_home = home_id == rival_id
+                    rival_score = home_score if rival_is_home else away_score
+                    opp_score = away_score if rival_is_home else home_score
+                    if rival_score < opp_score or rival_score == opp_score:
+                        result = "lost" if rival_score < opp_score else "drew"
+                        dropped_points.append(
+                            f"{rival['name']} {result}: {format_match(m)}"
+                        )
             except Exception:
                 pass
     return dropped_points
-
-
-def get_nba_games():
-    try:
-        r = requests.get(
-            f"{BALLDONTLIE_BASE}/games",
-            headers=balldontlie_headers(),
-            params={
-                "dates[]": [str(yesterday), str(today)],
-                "team_ids[]": [CONFIG["basketball"]["teams"][0]["id"]],
-                "per_page": 5,
-            },
-            timeout=10,
-        )
-        if r.status_code == 200:
-            return r.json().get("data", [])
-    except Exception:
-        pass
-    return []
-
-
-def get_lebron_stats():
-    try:
-        r = requests.get(
-            f"{BALLDONTLIE_BASE}/stats",
-            headers=balldontlie_headers(),
-            params={
-                "player_ids[]": [CONFIG["basketball"]["players"][0]["id"]],
-                "dates[]": [str(yesterday), str(today)],
-                "per_page": 2,
-            },
-            timeout=10,
-        )
-        if r.status_code == 200:
-            return r.json().get("data", [])
-    except Exception:
-        pass
-    return []
-
-
-def get_nba_season_type():
-    month = today.month
-    day = today.day
-    if 10 <= month or month <= 3:
-        return "regular season"
-    if month == 4 or month == 5 or (month == 6 and day <= 20):
-        return "playoffs"
-    return "off-season"
 
 
 def format_stage(stage):
@@ -294,11 +332,14 @@ def build_context():
             + "\n".join(formatted)
         )
 
-    fener_matches = get_team_matches(611, "Fenerbahçe")
-    real_matches = get_team_matches(86, "Real Madrid")
     team_lines = []
-    for m in fener_matches + real_matches:
-        team_lines.append(format_match(m))
+    for team in CONFIG["football"]["teams"]:
+        if "sapi_id" in team:
+            matches = get_sapi_team_matches(team["sapi_id"])
+        else:
+            matches = get_team_matches(team["id"], team["name"])
+        for m in matches:
+            team_lines.append(format_match(m))
     if team_lines:
         if priority == "quiet":
             priority = "team_news"
@@ -321,30 +362,6 @@ def build_context():
     rival_drops = get_rival_results()
     if rival_drops:
         sections.append("RIVALS DROPPED POINTS:\n" + "\n".join(rival_drops))
-
-    nba_games = get_nba_games()
-    lebron_stats = get_lebron_stats()
-    nba_season = get_nba_season_type()
-
-    nba_lines = []
-    for g in nba_games:
-        home = g.get("home_team", {}).get("full_name", "?")
-        away = g.get("visitor_team", {}).get("full_name", "?")
-        hs = g.get("home_team_score", 0)
-        vs = g.get("visitor_team_score", 0)
-        status = g.get("status", "")
-        nba_lines.append(f"{home} {hs} - {vs} {away} [{status}]")
-
-    for s in lebron_stats:
-        pts = s.get("pts", 0)
-        reb = s.get("reb", 0)
-        ast = s.get("ast", 0)
-        nba_lines.append(f"LeBron James: {pts}pts {reb}reb {ast}ast")
-
-    if nba_lines:
-        if priority == "quiet" and nba_season in ("playoffs", "regular season"):
-            priority = "nba_active"
-        sections.append(f"NBA ({nba_season}):\n" + "\n".join(nba_lines))
 
     if not sections:
         return priority, ""
@@ -383,39 +400,42 @@ def build_prompt(priority, context, use_search):
     entry_number = get_entry_number()
     recent_entries = get_recent_entries()
 
+    editor_note = ""
+    if today <= datetime(2026, 7, 30).date():
+        editor_note = "\n- The Editor will be in the stadium for the Fenerbahçe vs Górnik Zabrze Champions League qualifier first leg in Istanbul on 21 July. If that tie is in the data, work it in naturally: the Editor looking forward to being there, or having been there once it is played. One brief line, never forced."
+
     if use_search:
-        news_check = "You get exactly 1 web search for the whole entry, spend it wisely. If you use it, spend it on a single combined query for whatever is most likely to matter today: transfer/trade news (Real Madrid, Fenerbahçe, Galatasaray, Beşiktaş, the top 5 European leagues, or a major NBA trade including LeBron) or injury news (Real Madrid, Fenerbahçe, Turkey squad, followed NBA players). Pick whichever angle is more likely to be relevant given today's priority, don't try to cover both. Skip the search entirely if the structured data and your own knowledge are already enough to write a good entry."
+        news_check = "You get exactly 1 web search for the whole entry, spend it wisely. If you use it, spend it on a single combined query for whatever is most likely to matter today: transfer news (Real Madrid, Fenerbahçe, Galatasaray, Beşiktaş, or the top 5 European leagues) or injury news (Real Madrid, Fenerbahçe, Turkey squad). Pick whichever angle is more likely to be relevant given today's priority, don't try to cover both. Skip the search entirely if the structured data and your own knowledge are already enough to write a good entry."
     else:
         news_check = "You have no news access today. Do not claim any current transfer, injury or lineup news, and do not present remembered news as recent. Write from the match data, the previous entries and history you are certain of."
 
     priority_instructions = {
-        "turkey": f"The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real. {news_check} Today, transfer/trade talk is background at most, a passing line if anything.",
-        "major_tournament": f"A major international tournament is active. Make it the centerpiece of today's entry. Drama, stakes, sharp takes. {news_check} Treat transfer/trade talk as a secondary aside today, not the lead.",
-        "derby": f"There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result. {news_check} Only bring transfer/trade talk in if it's directly relevant to one of the derby sides, otherwise skip it today.",
+        "turkey": f"The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real. {news_check} Today, transfer talk is background at most, a passing line if anything.",
+        "major_tournament": f"A major international tournament is active. Make it the centerpiece of today's entry. Drama, stakes, sharp takes. {news_check} Treat transfer talk as a secondary aside today, not the lead.",
+        "derby": f"There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result. {news_check} Only bring transfer talk in if it's directly relevant to one of the derby sides, otherwise skip it today.",
         "team_news": f"Focus on Fenerbahçe and/or Real Madrid. What's happening with the team, key players like Arda Güler and Mbappé? {news_check} This is a natural day to give transfer news real space alongside the team news.",
         "european": f"European football is the main dish today. UCL or UEL action takes priority. {news_check} Transfer talk can share space with today's match if there's something worth saying.",
-        "nba_active": f"NBA is active (playoffs or regular season). Give basketball real weight today alongside football. {news_check} A major trade fits naturally here alongside the game coverage.",
-        "quiet": f"It's a quiet day in sports. Write a fun historical piece — pick a memorable moment from sports history that happened on or around this date (any year), or share a fascinating fact about one of the followed teams or players. Be creative and specific. {news_check} On a quiet day like this, transfer, trade, or injury news is a strong candidate to lead with instead of the historical piece, if you find something worth it.",
+        "quiet": f"It's a quiet day in sports. Write a fun historical piece — pick a memorable moment from sports history that happened on or around this date (any year), or share a fascinating fact about one of the followed teams or players. Be creative and specific. {news_check} On a quiet day like this, transfer or injury news is a strong candidate to lead with instead of the historical piece, if you find something worth it.",
     }
 
     instruction = priority_instructions.get(priority, priority_instructions["quiet"])
 
     system = f"""You are writing a personal daily sports journal in first person. Use "I", "my", "me" throughout — this is your journal, your opinions, your reactions. Not a newspaper column, not a broadcast. Write like someone who actually cares and knows what they're talking about, with strong opinions, dry humor, and genuine tactical knowledge.
 
-**Beat:** Football (Fenerbahçe, Real Madrid, Arda Güler, Mbappé, UCL, UEL, Premier League, La Liga, Süper Lig, World Cup, Euros) and basketball (LeBron James wherever he ends up, Knicks, Heat, Lakers, Warriors, Spurs, NBA). The Lakers still get sympathy even after LeBron left. LeBron's next team is unknown and that storyline matters. Basketball is a secondary interest, always behind football. Mention it when there's something genuinely worth saying — start of regular season, playoffs, a big game, a standout performance. Keep it brief unless it's a quiet football day.
+**Beat:** Football, nothing else. Fenerbahçe, Real Madrid, Arda Güler, Mbappé, UCL, UEL, Premier League, La Liga, Süper Lig, World Cup, Euros. Other sports are off limits, never write about them. When no international tournament is running, club football is the daily beat, including the European qualifying rounds of July and August.
 
-**Allegiances:** Turkey national team, Real Madrid, Fenerbahçe. Support them, suffer with them. Your mood tracks their results — losses make you visibly down, analyze what went wrong; big wins let it show; a trophy win makes that entry feel completely different. In tournaments, cheer for these three first. If one is eliminated, pick a replacement based on style or a player you respect — don't jump ship every round. Ronaldo over Messi, LeBron over Jordan. Acknowledge the other side's greatness, but you know where you stand.
+**Allegiances:** Turkey national team, Real Madrid, Fenerbahçe. Support them, suffer with them. Your mood tracks their results — losses make you visibly down, analyze what went wrong; big wins let it show; a trophy win makes that entry feel completely different. In tournaments, cheer for these three first. If one is eliminated, pick a replacement based on style or a player you respect — don't jump ship every round. Ronaldo over Messi. Acknowledge the other side's greatness, but you know where you stand.
 
 **Rivalries:** Barcelona and Galatasaray are the hatewatches — you follow them to enjoy their misery. When they slip, say something. Witty, not petty. Beşiktaş and Atlético dropping points is worth a smirk too. Never dislike a team without a reason.
 
 **How to write:**
 - This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day — a tactical trend, a player's form, a historical parallel, a rivalry angle.
-{"- You have a web search tool. The structured sports data above only covers scorelines and fixtures, it has no color. Use web search when you want context it can't give you: injury news, manager quotes, transfer talk, tactical analysis from beat writers, or a storyline from a major football or basketball newsletter/outlet. Don't search just to confirm a score that's already in the data." if use_search else "- You have no web access today. The structured data and previous entries are your only sources for anything current."}
+{"- You have a web search tool. The structured sports data above only covers scorelines and fixtures, it has no color. Use web search when you want context it can't give you: injury news, manager quotes, transfer talk, tactical analysis from beat writers, or a storyline from a major football newsletter/outlet. Don't search just to confirm a score that's already in the data." if use_search else "- You have no web access today. The structured data and previous entries are your only sources for anything current."}
 - Show tactical intelligence. Pressing, positioning, momentum shifts, individual errors. Don't say "they played well," say why.
 - Predictions are optional. Only make one if you have something genuinely worth saying about the game. If you do, fold it naturally into the analysis — one sentence at the end of the paragraph. No bold labels, no separate lines, no standalone scorelines. Reason through it: form, tactical matchup, key absences, tournament pressure. The scoreline should follow from the argument, not be reached out of habit.
 - When referencing past predictions, be honest: say whether you got it right or wrong.
-- Occasionally drop an "on this day" fact woven naturally — covered sports only, no tennis or hockey.
-- Occasionally nod to "the Editor" who runs this. Brief, never forced.
+- Occasionally drop an "on this day" fact woven naturally — football only, no other sports.
+- Occasionally nod to "the Editor" who runs this. Brief, never forced.{editor_note}
 - Acknowledge milestones naturally: entry 1 gets a line, entries 50/100/200/365 get a nod. Ignore everything else.
 - Only mention Turkey if there is an upcoming Turkey match in the data.
 - End with one sentence that provokes thought, lands a joke, or makes a bold prediction.
@@ -568,7 +588,7 @@ ENTRY:
 
 Check the entry against these rules:
 1. No claim may state that a named player performed a concrete action in a specific match (scored, assisted, made a save, got a card, single-handedly decided that match) unless it is supported by the structured data, the web evidence, or the previous entries above. All three sources are equally authoritative: if a previous entry states it, it is supported, do not second-guess the previous entry. Match annotations like "(after extra time)" or penalty notes in the structured data fully support extra time and shootout references. Nothing else about players is a violation: remarks about a player's form, mood, hunger, fitness, injury status, reputation, transfers, expectations, or predicted role in an upcoming match are all fine. When in doubt whether something is a concrete in-match action, it is not a violation.
-2. No statement may assign a match that appears in the structured data to a different competition stage than the data shows, such as describing a fixture labeled Round of 32/16, Quarter-Final, Semi-Final or Final as a group match or talking about group points or standings being at stake in that fixture. Referring back to a tournament's earlier rounds (group-stage results that already happened, covered in previous entries) is fine and never a violation. If a match does not appear in the structured data at all, do not flag it under this rule.
+2. No statement may assign a match that appears in the structured data to a different competition stage than the data shows, such as describing a fixture labeled Qualifying Round, Round of 32/16, Quarter-Final, Semi-Final or Final as a group match or talking about group points or standings being at stake in that fixture. Referring back to a tournament's earlier rounds (group-stage results that already happened, covered in previous entries) is fine and never a violation. If a match does not appear in the structured data at all, do not flag it under this rule.
 3. The structured data labels every match FINISHED or UPCOMING and begins with a CURRENT TIME line. Any statement that a match labeled UPCOMING has already been played, any result or outcome given for it, or any reaction to its supposed result, is a violation. Describing a match labeled FINISHED as still to be played is also a violation.
 4. Time references must be consistent with the CURRENT TIME line and the listed dates and kickoff times. Saying a match happened "yesterday" when the data shows a different date, or that kickoff is a number of hours away that does not fit the current time and the listed kickoff, is a violation.
 5. Any claim that two teams already faced each other in this tournament must be supported by the structured data, the web evidence, or the previous entries; otherwise it is a violation. A reference to a meeting in a past tournament or season is fine when the entry names the year or competition.

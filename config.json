@@ -1,7 +1,7 @@
 {
   "football": {
     "teams": [
-      { "name": "Fenerbahçe", "id": 611 },
+      { "name": "Fenerbahçe", "id": 611, "sapi_id": 3052 },
       { "name": "Real Madrid", "id": 86 }
     ],
     "players": [
@@ -32,21 +32,13 @@
     ],
     "rivals": {
       "611": [
-        { "name": "Galatasaray", "id": 610 },
-        { "name": "Beşiktaş", "id": 609 }
+        { "name": "Galatasaray", "id": 610, "sapi_id": 3061 },
+        { "name": "Beşiktaş", "id": 609, "sapi_id": 3050 }
       ],
       "86": [
         { "name": "Barcelona", "id": 81 },
         { "name": "Atlético Madrid", "id": 78 }
       ]
     }
-  },
-  "basketball": {
-    "players": [
-      { "name": "LeBron James", "id": 237 }
-    ],
-    "teams": [
-      { "name": "Los Angeles Lakers", "id": 14 }
-    ]
   }
 }
