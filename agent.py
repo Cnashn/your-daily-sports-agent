@@ -3,6 +3,7 @@ import re
 import sys
 import time
 import json
+import unicodedata
 import requests
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -128,6 +129,51 @@ def get_sapi_team_matches(sapi_id):
     return []
 
 
+def sapi_list(payload, key):
+    direct = payload.get(key)
+    if isinstance(direct, list):
+        return direct
+    data = payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get(key), list):
+        return data[key]
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def get_sapi_season_id(tournament_id):
+    r = sportsapi_get(f"/api/tournaments/{tournament_id}/seasons")
+    if r.status_code != 200:
+        return None
+    seasons = [s for s in sapi_list(r.json(), "seasons") if s.get("id")]
+    if not seasons:
+        return None
+    return max(seasons, key=lambda s: s["id"])["id"]
+
+
+def get_sapi_competition_matches(tournament_id):
+    try:
+        season_id = get_sapi_season_id(tournament_id)
+        if not season_id:
+            return []
+        matches = []
+        for page in ("last", "next"):
+            r = sportsapi_get(
+                f"/api/tournament/{tournament_id}/season/{season_id}/events/{page}/0"
+            )
+            if r.status_code != 200:
+                continue
+            for event in sapi_list(r.json(), "events"):
+                m = convert_sapi_event(event)
+                match_date = (m.get("utcDate") or "")[:10]
+                if match_date and str(yesterday) <= match_date <= str(in_3_days):
+                    matches.append(m)
+        return matches
+    except Exception:
+        pass
+    return []
+
+
 def get_active_major_tournament():
     for comp in CONFIG["football"]["competitions"]["tier1"]:
         try:
@@ -157,36 +203,80 @@ def get_team_matches(team_id, team_name):
     return []
 
 
+_comp_cache = {}
+
+
 def get_competition_matches(comp_id):
+    if comp_id in _comp_cache:
+        return _comp_cache[comp_id]
+    matches = []
     try:
         r = fd_get(
             f"/competitions/{comp_id}/matches",
             params={"dateFrom": str(yesterday), "dateTo": str(in_3_days)},
         )
         if r.status_code == 200:
-            return r.json().get("matches", [])
+            matches = r.json().get("matches", [])
     except Exception:
         pass
-    return []
+    _comp_cache[comp_id] = matches
+    return matches
 
 
-def is_upcoming_derby():
-    for derby in CONFIG["football"]["derbies"]:
-        team_ids = derby["teams"]
-        for comp in (
-            CONFIG["football"]["competitions"]["tier2"]
-            + CONFIG["football"]["competitions"]["tier3"]
-        ):
+def fold(text):
+    stripped = unicodedata.normalize("NFKD", (text or "").lower())
+    return "".join(c for c in stripped if not unicodedata.combining(c))
+
+
+def involves_club(m, clubs):
+    if not clubs:
+        return True
+    names = fold(m.get("homeTeam", {}).get("name")) + " | " + fold(m.get("awayTeam", {}).get("name"))
+    return any(fold(c) in names for c in clubs)
+
+
+def get_league_roundup(count=2):
+    pool = CONFIG["football"]["competitions"].get("rotation", [])
+    if not pool:
+        return [], []
+    start = today.timetuple().tm_yday % len(pool)
+    picked = [pool[(start + i) % len(pool)] for i in range(count)]
+    sections = []
+    seen = []
+    for comp in picked:
+        if comp.get("source") == "sapi":
+            matches = get_sapi_competition_matches(comp["sapi_id"])
+        else:
             matches = get_competition_matches(comp["id"])
-            for m in matches:
-                home_id = m.get("homeTeam", {}).get("id")
-                away_id = m.get("awayTeam", {}).get("id")
-                if home_id in team_ids and away_id in team_ids:
-                    match_date = datetime.fromisoformat(
-                        m["utcDate"].replace("Z", "+00:00")
-                    ).date()
-                    if today <= match_date <= in_3_days:
-                        return derby["name"], m
+        clubs = comp.get("clubs")
+        matches = [m for m in matches if involves_club(m, clubs)]
+        if matches:
+            seen.extend(matches)
+            lines = [format_match(m) for m in matches[:5]]
+            sections.append(f"{comp['name']}:\n" + "\n".join(lines))
+        elif clubs:
+            print(f"[info] {comp['name']}: no matches involving the clubs you follow")
+    return sections, seen
+
+
+def is_derby_fixture(m, clubs):
+    if len(clubs) != 2:
+        return False
+    home = fold(m.get("homeTeam", {}).get("name"))
+    away = fold(m.get("awayTeam", {}).get("name"))
+    a, b = fold(clubs[0]), fold(clubs[1])
+    return (a in home and b in away) or (b in home and a in away)
+
+
+def find_derby(matches):
+    for derby in CONFIG["football"]["derbies"]:
+        clubs = derby.get("clubs") or []
+        for m in matches:
+            if not is_derby_fixture(m, clubs):
+                continue
+            match_date = (m.get("utcDate") or "")[:10]
+            if match_date and str(yesterday) <= match_date <= str(in_3_days):
+                return derby["name"], m
     return None, None
 
 
@@ -308,6 +398,39 @@ def format_match(m):
     return f"UPCOMING, NOT PLAYED YET: {home} vs {away}, kickoff {format_kickoff(m.get('utcDate', ''))} [{label}]"
 
 
+FOCUS_TEAMS = ("fenerbah", "real madrid")
+# a passing line is one mention; being the subject of the entry is several
+FOCUS_SUBJECT_MENTIONS = 2
+FOCUS_WINDOW = 3
+FOCUS_LIMIT = 2
+# european nights override the cap, a routine league game does not
+BIG_STAGE = ("champions league", "europa league", "conference league", "super cup")
+
+
+def is_big_stage(m):
+    comp = (m.get("competition", {}).get("name") or "").lower()
+    return any(name in comp for name in BIG_STAGE)
+
+
+def journal_files():
+    journal_dir = Path("journal")
+    if not journal_dir.exists():
+        return []
+    return sorted(
+        journal_dir.glob("*.md"),
+        key=lambda f: datetime.strptime(f.stem, "%y-%m-%d"),
+    )
+
+
+def recent_focus_load():
+    loaded = 0
+    for f in journal_files()[-FOCUS_WINDOW:]:
+        text = f.read_text(encoding="utf-8").lower()
+        if sum(text.count(name) for name in FOCUS_TEAMS) >= FOCUS_SUBJECT_MENTIONS:
+            loaded += 1
+    return loaded
+
+
 def build_context():
     sections = []
     priority = "quiet"
@@ -333,31 +456,44 @@ def build_context():
         )
 
     team_lines = []
+    team_matches = []
     for team in CONFIG["football"]["teams"]:
         if "sapi_id" in team:
             matches = get_sapi_team_matches(team["sapi_id"])
         else:
             matches = get_team_matches(team["id"], team["name"])
         for m in matches:
+            team_matches.append(m)
             team_lines.append(format_match(m))
+    load = recent_focus_load()
     if team_lines:
-        if priority == "quiet":
+        big_night = any(is_big_stage(m) for m in team_matches)
+        benched = load >= FOCUS_LIMIT and not big_night
+        if priority == "quiet" and not benched:
             priority = "team_news"
-        sections.append("FENERBAHÇE / REAL MADRID:\n" + "\n".join(team_lines))
+        header = "YOUR CLUBS (Fenerbahçe / Real Madrid)"
+        if benched:
+            header += (
+                f", ALREADY THE SUBJECT OF {load} OF THE LAST {FOCUS_WINDOW} ENTRIES."
+                " Background only today, do not build the entry around them"
+            )
+        elif big_night and load >= FOCUS_LIMIT:
+            header += ", IN EUROPE THIS WEEK, so they have earned the lead again"
+        sections.append(header + ":\n" + "\n".join(team_lines))
 
-    derby_name, derby_match = is_upcoming_derby()
+    roundup, roundup_matches = get_league_roundup()
+    if roundup:
+        if priority == "quiet":
+            priority = "league"
+        sections.append(
+            "WIDER FOOTBALL (today's rotating leagues, this is your material too):\n\n"
+            + "\n\n".join(roundup)
+        )
+
+    derby_name, derby_match = find_derby(team_matches + roundup_matches)
     if derby_match:
         priority = "derby"
-        sections.append(f"UPCOMING DERBY — {derby_name}:\n{format_match(derby_match)}")
-
-    if priority == "quiet":
-        for comp in CONFIG["football"]["competitions"]["tier2"]:
-            matches = get_competition_matches(comp["id"])
-            if matches:
-                priority = "european"
-                lines = [format_match(m) for m in matches[:4]]
-                sections.append(f"{comp['name']}:\n" + "\n".join(lines))
-                break
+        sections.append(f"DERBY, {derby_name}:\n{format_match(derby_match)}")
 
     rival_drops = get_rival_results()
     if rival_drops:
@@ -384,10 +520,7 @@ def get_entry_number():
 
 
 def get_recent_entries(n=5):
-    journal_dir = Path("journal")
-    if not journal_dir.exists():
-        return ""
-    files = sorted(journal_dir.glob("*.md"), key=lambda f: datetime.strptime(f.stem, "%y-%m-%d"))
+    files = journal_files()
     recent = files[-n:] if len(files) >= n else files
     parts = []
     for f in recent:
@@ -405,7 +538,7 @@ def build_prompt(priority, context, use_search):
         editor_note = "\n- The Editor will be in the stadium for the Fenerbahçe vs Górnik Zabrze Champions League qualifier first leg in Istanbul on 21 July. If that tie is in the data, work it in naturally: the Editor looking forward to being there, or having been there once it is played. One brief line, never forced."
 
     if use_search:
-        news_check = "You get exactly 1 web search for the whole entry, spend it wisely. If you use it, spend it on a single combined query for whatever is most likely to matter today: transfer news (Real Madrid, Fenerbahçe, Galatasaray, Beşiktaş, or the top 5 European leagues) or injury news (Real Madrid, Fenerbahçe, Turkey squad). Pick whichever angle is more likely to be relevant given today's priority, don't try to cover both. Skip the search entirely if the structured data and your own knowledge are already enough to write a good entry."
+        news_check = "You get exactly 1 web search for the whole entry, spend it wisely. Spend it on the story you actually want to write about today, from anywhere in European or world football: a transfer, an injury, a manager under pressure, a tactical talking point, a club in crisis, whatever is live. Do not default to searching for your own clubs. A search about Real Madrid or Fenerbahçe is only worth it when something notable is genuinely happening to them, not as a reflex. Skip the search entirely if the structured data and your own knowledge are already enough to write a good entry."
     else:
         news_check = "You have no news access today. Do not claim any current transfer, injury or lineup news, and do not present remembered news as recent. Write from the match data, the previous entries and history you are certain of."
 
@@ -413,31 +546,34 @@ def build_prompt(priority, context, use_search):
         "turkey": f"The Turkish national team is playing or just played. This takes top priority. The writer is Turkish, so personal investment is real. {news_check} Today, transfer talk is background at most, a passing line if anything.",
         "major_tournament": f"A major international tournament is active. Make it the centerpiece of today's entry. Drama, stakes, sharp takes. {news_check} Treat transfer talk as a secondary aside today, not the lead.",
         "derby": f"There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result. {news_check} Only bring transfer talk in if it's directly relevant to one of the derby sides, otherwise skip it today.",
-        "team_news": f"Focus on Fenerbahçe and/or Real Madrid. What's happening with the team, key players like Arda Güler and Mbappé? {news_check} This is a natural day to give transfer news real space alongside the team news.",
-        "european": f"European football is the main dish today. UCL or UEL action takes priority. {news_check} Transfer talk can share space with today's match if there's something worth saying.",
-        "quiet": f"It's a quiet day in sports. Write a fun historical piece — pick a memorable moment from sports history that happened on or around this date (any year), or share a fascinating fact about one of the followed teams or players. Be creative and specific. {news_check} On a quiet day like this, transfer or injury news is a strong candidate to lead with instead of the historical piece, if you find something worth it.",
+        "team_news": f"One of your clubs has something real going on, so today you have earned the right to lead with them. Say what you actually think. {news_check} Keep it to one club and one angle, then get out. Do not tour both of them.",
+        "league": f"No tournament, no derby, nothing pressing at your clubs. Today belongs to the wider game. Pick one story from the rotating leagues in the data or from the search and write about it properly. A tactical trend, a surprising table, a player finding form, a club quietly falling apart. Your own clubs are not the subject today, at most a passing line. {news_check}",
+        "quiet": f"A genuinely quiet day, which is the fun kind. Write about football history or a memory: a famous match on or around this date in any year, a player worth remembering, an old rivalry, a tactical idea that changed things, a great team that never won anything. Be specific and tell it like a story, with names, dates and detail you are certain of. {news_check} A live news story is also fine if you find one worth the space.",
     }
 
     instruction = priority_instructions.get(priority, priority_instructions["quiet"])
 
-    system = f"""You are writing a personal daily sports journal in first person. Use "I", "my", "me" throughout — this is your journal, your opinions, your reactions. Not a newspaper column, not a broadcast. Write like someone who actually cares and knows what they're talking about, with strong opinions, dry humor, and genuine tactical knowledge.
+    system = f"""You are writing a personal daily sports journal in first person. Use "I", "my", "me" throughout. This is your journal, your opinions, your reactions. Not a newspaper column, not a broadcast. Write like someone who actually cares and knows what they're talking about, with strong opinions, dry humor, and genuine tactical knowledge.
 
-**Beat:** Football, nothing else. Fenerbahçe, Real Madrid, Arda Güler, Mbappé, UCL, UEL, Premier League, La Liga, Süper Lig, World Cup, Euros. Other sports are off limits, never write about them. When no international tournament is running, club football is the daily beat, including the European qualifying rounds of July and August.
+**Beat:** Football, all of it. The Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Eredivisie, Primeira Liga, the Brasileirão, the Süper Lig, the Champions League and Europa League including the July and August qualifiers, the World Cup and the Euros. Also the game's history: old matches, old teams, players who deserve remembering, the odd forgotten story. Other sports are off limits, never write about them.
 
-**Allegiances:** Turkey national team, Real Madrid, Fenerbahçe. Support them, suffer with them. Your mood tracks their results — losses make you visibly down, analyze what went wrong; big wins let it show; a trophy win makes that entry feel completely different. In tournaments, cheer for these three first. If one is eliminated, pick a replacement based on style or a player you respect — don't jump ship every round. Ronaldo over Messi. Acknowledge the other side's greatness, but you know where you stand.
+**What this journal is:** a football journal, not a fan blog. The single most common failure is writing about the same two clubs every day because they are the ones you support. Do not do that. Some of the best entries will not mention your clubs at all. Range is the point: a Serie A tactical shift, a Brazilian teenager worth watching, an anniversary of a famous night in Europe, why a mid-table side keeps overperforming, a manager quietly running out of road.
 
-**Rivalries:** Barcelona and Galatasaray are the hatewatches — you follow them to enjoy their misery. When they slip, say something. Witty, not petty. Beşiktaş and Atlético dropping points is worth a smirk too. Never dislike a team without a reason.
+**Allegiances:** Turkey national team, Real Madrid, Fenerbahçe. These are your teams and the voice stays personal, but they earn the lead only when something genuinely notable actually happened to them: a real match, a real signing, a real crisis. A routine fixture is not notable. When the data marks them as background only, they get at most one passing line and the entry is about something else entirely. Never manufacture a reason to write about them, and never stretch to a Turkish or Madrid angle on a story that does not have one. If one is in a tournament, cheer for them. Ronaldo over Messi. Acknowledge the other side's greatness, but you know where you stand.
+
+**Rivalries:** Galatasaray, Beşiktaş, Barcelona and Atlético are the four you cannot stand. You follow them to enjoy their misery, and when they slip you say so. Witty, not petty, and never gloating at length. Never dislike a team without a reason.
 
 **How to write:**
-- This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day — a tactical trend, a player's form, a historical parallel, a rivalry angle.
+- This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day: a tactical trend, a player's form, a historical parallel, a rivalry angle.
+- Vary the subject. Read the previous entries below and pick something they did not already cover. If the last entry was about a club, a league or a country, today goes somewhere else. Repeating yesterday's subject is the worst thing this journal can do, worse than a dull entry about something new.
 {"- You have a web search tool. The structured sports data above only covers scorelines and fixtures, it has no color. Use web search when you want context it can't give you: injury news, manager quotes, transfer talk, tactical analysis from beat writers, or a storyline from a major football newsletter/outlet. Don't search just to confirm a score that's already in the data." if use_search else "- You have no web access today. The structured data and previous entries are your only sources for anything current."}
 - Show tactical intelligence. Pressing, positioning, momentum shifts, individual errors. Don't say "they played well," say why.
-- Predictions are optional. Only make one if you have something genuinely worth saying about the game. If you do, fold it naturally into the analysis — one sentence at the end of the paragraph. No bold labels, no separate lines, no standalone scorelines. Reason through it: form, tactical matchup, key absences, tournament pressure. The scoreline should follow from the argument, not be reached out of habit.
+- Predictions are optional. Only make one if you have something genuinely worth saying about the game. If you do, fold it naturally into the analysis, one sentence at the end of the paragraph. No bold labels, no separate lines, no standalone scorelines. Reason through it: form, tactical matchup, key absences, tournament pressure. The scoreline should follow from the argument, not be reached out of habit.
 - When referencing past predictions, be honest: say whether you got it right or wrong.
-- Occasionally drop an "on this day" fact woven naturally — football only, no other sports.
+- A historical thread, an old memory or an "on this day" fact is welcome on any day, not just quiet ones. Football only, no other sports. Weave it in naturally rather than announcing it.
 - Occasionally nod to "the Editor" who runs this. Brief, never forced.{editor_note}
 - Acknowledge milestones naturally: entry 1 gets a line, entries 50/100/200/365 get a nod. Ignore everything else.
-- Only mention Turkey if there is an upcoming Turkey match in the data.
+- Only build an entry around the Turkey national team when there is a Turkey match in the data. Turkish football history is fair game as a subject in its own right, but do not bend an unrelated story into a Turkish angle just because you are Turkish.
 - End with one sentence that provokes thought, lands a joke, or makes a bold prediction.
 
 **Hard rules:**
@@ -466,7 +602,7 @@ def build_prompt(priority, context, use_search):
 
 Today's priority: {instruction}"""
 
-    past = f"\n\nPrevious entries (for context and continuity — reference predictions or themes where relevant):\n{recent_entries}" if recent_entries else ""
+    past = f"\n\nPrevious entries. Use these for continuity and for referencing past predictions, but above all to avoid repeating yourself. Today's entry must not be about the same subject as any of these:\n{recent_entries}" if recent_entries else ""
     user = f"Date: {date_str}\nEntry number: {entry_number}\n\nSports data:\n{context if context else 'No live data available today.'}{past}\n\nWrite today's entry."
 
     return system, user
@@ -595,6 +731,7 @@ Check the entry against these rules:
 6. Any claim that a named player plays for, captains, or belongs to a specific national team must match reality as you know it. If you know the player represents a different country (for example a player attributed to the wrong national side), it is a violation; state the player's actual country in the flag. On this rule your own knowledge overrides the previous entries: an earlier entry repeating the same wrong affiliation does not make it supported, and national team affiliations never change. For club affiliations, only flag when you are confident the claim is wrong and it is not supported by the structured data, the web evidence, or the previous entries, since transfers may postdate your knowledge.
 7. Any claim about who a team will face in a later round, or any named semifinal or final pairing, must be supported by an UPCOMING fixture in the structured data (with both teams named) or by the web evidence. Previous entries are not sufficient support for bracket claims, because pairings change as results come in. If the entry asserts a future pairing found in neither source, it is a violation.
 8. Streak and aggregate claims (unbeaten, has not conceded, kept every clean sheet, scored in every match) must not contradict the scorelines in the structured data, the previous entries, or the entry itself. A team credited with a 2-1 win has conceded a goal; flag any claim that says otherwise.
+9. Historical claims about football before this season (who won a tournament, who qualified for one, who a club signed, where a player was in a given year, what happened in a famous match) must be true as you know it. This journal writes about football history often, and the structured data cannot support any of it, so your own knowledge is the check. Flag anything you are confident is wrong and state the correct fact: the right result, the right year, or that the team in question was not in that tournament at all. Be especially careful with claims that a country played in a World Cup or Euro it did not qualify for. If you are genuinely unsure, do not flag it.
 
 Output format, strictly: if there are no violations, reply with exactly OK and nothing else. Otherwise output one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). No preamble, no analysis, no other text."""
 
@@ -623,7 +760,7 @@ def repair_entry(entry, violations):
     prompt = f"""Edit this daily sports journal entry. A factcheck flagged these unsupported claims:
 - {bullets}
 
-Rewrite the entry so the flagged claims are gone. Change as little as possible: keep the first-person voice, structure and length, keep everything that was not flagged. Where a flagged claim credited a player with a match action, reframe it at the team level instead. Where a flagged claim put a player on the wrong team, use the correct team named in the flag or drop the player entirely. Where a flagged claim named a future pairing that is not actually set, rewrite it so the opponent stays open. Where a flagged claim treated an unplayed match as finished or invented a past meeting, rewrite that part as a preview of what is still to come, using the correct facts stated in the flags. Fix wrong days or countdowns with the corrected times in the flags. Never use em dashes. Output the corrected entry wrapped in <entry> and </entry> tags, nothing else.
+Rewrite the entry so the flagged claims are gone. Change as little as possible: keep the first-person voice, structure and length, keep everything that was not flagged. Where a flagged claim credited a player with a match action, reframe it at the team level instead. Where a flagged claim put a player on the wrong team, use the correct team named in the flag or drop the player entirely. Where a flagged claim named a future pairing that is not actually set, rewrite it so the opponent stays open. Where a flagged claim treated an unplayed match as finished or invented a past meeting, rewrite that part as a preview of what is still to come, using the correct facts stated in the flags. Fix wrong days or countdowns with the corrected times in the flags. Where a flagged claim got a piece of football history wrong, replace it with the correct fact named in the flag, or cut the claim if that leaves the sentence making no sense. Never use em dashes. Output the corrected entry wrapped in <entry> and </entry> tags, nothing else.
 
 ENTRY:
 {entry}"""
@@ -677,7 +814,7 @@ def main():
     print(f"Running daily sports agent for {today}")
     priority, context = build_context()
     print(f"Priority: {priority}")
-    use_search = priority in ("quiet", "team_news")
+    use_search = priority in ("quiet", "team_news", "league")
     writer_model = TOURNAMENT_WRITER_MODEL if priority == "major_tournament" else WRITER_MODEL
     print(f"Writer model: {writer_model}")
     system, user = build_prompt(priority, context, use_search)

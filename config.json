@@ -16,19 +16,45 @@
         { "name": "FIFA World Cup", "id": "WC" },
         { "name": "UEFA European Championship", "id": "EC" }
       ],
-      "tier2": [
+      "rotation": [
         { "name": "UEFA Champions League", "id": "CL" },
-        { "name": "UEFA Europa League", "id": "EL" }
-      ],
-      "tier3": [
-        { "name": "Premier League", "id": "PL" },
-        { "name": "La Liga", "id": "PD" },
-        { "name": "Süper Lig", "id": "TR1" }
+        { "name": "UEFA Europa League", "id": "EL" },
+        {
+          "name": "Premier League",
+          "id": "PL",
+          "clubs": ["arsenal", "chelsea", "liverpool", "manchester city", "manchester united", "tottenham"]
+        },
+        {
+          "name": "La Liga",
+          "id": "PD",
+          "clubs": ["real madrid", "barcelona", "atletico"]
+        },
+        {
+          "name": "Serie A",
+          "id": "SA",
+          "clubs": ["juventus", "internazionale", "ac milan", "napoli", "roma", "lazio"]
+        },
+        {
+          "name": "Bundesliga",
+          "id": "BL1",
+          "clubs": ["bayern"]
+        },
+        {
+          "name": "Ligue 1",
+          "id": "FL1",
+          "clubs": ["paris saint-germain"]
+        },
+        {
+          "name": "Süper Lig",
+          "source": "sapi",
+          "sapi_id": 52,
+          "clubs": ["fenerbah", "galatasaray", "besiktas"]
+        }
       ]
     },
     "derbies": [
-      { "name": "El Clásico", "teams": [86, 81] },
-      { "name": "Intercontinental Derby", "teams": [611, 610] }
+      { "name": "El Clásico", "clubs": ["real madrid", "barcelona"] },
+      { "name": "Intercontinental Derby", "clubs": ["fenerbah", "galatasaray"] }
     ],
     "rivals": {
       "611": [
