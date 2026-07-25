@@ -18,7 +18,7 @@
       ],
       "rotation": [
         { "name": "UEFA Champions League", "id": "CL" },
-        { "name": "UEFA Europa League", "id": "EL" },
+        { "name": "UEFA Europa League", "source": "sapi", "sapi_id": 679 },
         {
           "name": "Premier League",
           "id": "PL",
