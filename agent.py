@@ -26,6 +26,7 @@ today = datetime.now(timezone.utc).date()
 yesterday = today - timedelta(days=1)
 in_3_days = today + timedelta(days=3)
 in_7_days = today + timedelta(days=7)
+RIVAL_LOOKBACK_DAYS = 3
 
 
 def football_headers():
@@ -109,7 +110,9 @@ def convert_sapi_event(e):
     }
 
 
-def get_sapi_team_matches(sapi_id):
+def get_sapi_team_matches(sapi_id, date_from=None, date_to=None):
+    date_from = str(date_from or yesterday)
+    date_to = str(date_to or in_3_days)
     try:
         r = sportsapi_get(f"/api/teams/{sapi_id}/near-events")
         if r.status_code != 200:
@@ -121,12 +124,30 @@ def get_sapi_team_matches(sapi_id):
                 continue
             m = convert_sapi_event(event)
             match_date = (m.get("utcDate") or "")[:10]
-            if match_date and str(yesterday) <= match_date <= str(in_3_days):
+            if match_date and date_from <= match_date <= date_to:
                 matches.append(m)
         return matches
     except Exception:
         pass
     return []
+
+
+def get_sapi_recent_matches(sapi_id, date_from, date_to):
+    """Recent finished matches, several per team. None means the call failed."""
+    try:
+        r = sportsapi_get(f"/api/teams/{sapi_id}/events/last/0")
+        if r.status_code != 200:
+            return None
+        events = (r.json().get("data") or {}).get("events") or []
+        matches = []
+        for event in events:
+            m = convert_sapi_event(event)
+            match_date = (m.get("utcDate") or "")[:10]
+            if match_date and str(date_from) <= match_date <= str(date_to):
+                matches.append(m)
+        return matches
+    except Exception:
+        return None
 
 
 def sapi_list(payload, key):
@@ -297,22 +318,24 @@ def get_turkey_matches():
 
 def get_rival_results():
     rivals_config = CONFIG["football"].get("rivals", {})
-    dropped_points = []
+    since = today - timedelta(days=RIVAL_LOOKBACK_DAYS)
+    losses, draws, unpoked_losses = [], [], []
     for team_id_str, rivals in rivals_config.items():
         for rival in rivals:
             try:
                 if "sapi_id" in rival:
                     rival_id = rival["sapi_id"]
-                    matches = [
-                        m for m in get_sapi_team_matches(rival["sapi_id"])
-                        if (m.get("utcDate") or "")[:10] <= str(today)
-                    ]
+                    matches = get_sapi_recent_matches(rival["sapi_id"], since, today)
+                    if matches is None:
+                        matches = get_sapi_team_matches(
+                            rival["sapi_id"], date_from=since, date_to=today
+                        )
                 else:
                     rival_id = rival["id"]
                     matches = []
                     r = fd_get(
                         f"/teams/{rival['id']}/matches",
-                        params={"dateFrom": str(yesterday), "dateTo": str(today), "limit": 3},
+                        params={"dateFrom": str(since), "dateTo": str(today), "limit": 5},
                     )
                     if r.status_code == 200:
                         matches = r.json().get("matches", [])
@@ -327,14 +350,28 @@ def get_rival_results():
                     rival_is_home = home_id == rival_id
                     rival_score = home_score if rival_is_home else away_score
                     opp_score = away_score if rival_is_home else home_score
-                    if rival_score < opp_score or rival_score == opp_score:
-                        result = "lost" if rival_score < opp_score else "drew"
-                        dropped_points.append(
-                            f"{rival['name']} {result}: {format_match(m)}"
-                        )
+                    if rival_score > opp_score:
+                        continue
+                    covered = mentioned_recently(rival["name"])
+                    tag = (
+                        " (already written about recently, do not repeat)"
+                        if covered
+                        else " (NOT yet written about, fair game)"
+                    )
+                    result = "lost" if rival_score < opp_score else "drew"
+                    line = (
+                        f"{rival['name']} {result}: "
+                        f"{format_match(m, show_freshness=False)}{tag}"
+                    )
+                    if result == "lost":
+                        losses.append(line)
+                        if not covered:
+                            unpoked_losses.append(rival["name"])
+                    else:
+                        draws.append(line)
             except Exception:
                 pass
-    return dropped_points
+    return losses, draws, unpoked_losses
 
 
 def format_stage(stage):
@@ -354,17 +391,25 @@ def format_kickoff(utc_str):
     return f"{local.strftime('%A %-d %B')} at {local.strftime('%-I:%M %p')} US Eastern ({dt.strftime('%H:%M')} UTC)"
 
 
+def is_recent(utc_str, hours=24):
+    try:
+        dt = datetime.fromisoformat((utc_str or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    return dt >= datetime.now(timezone.utc) - timedelta(hours=hours)
+
+
 def freshness(utc_str):
     try:
-        dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+        datetime.fromisoformat((utc_str or "").replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return ""
-    if dt < datetime.now(timezone.utc) - timedelta(hours=24):
+    if not is_recent(utc_str):
         return " (OLD NEWS, already covered in a previous entry)"
     return " (NEW since the last entry)"
 
 
-def format_match(m):
+def format_match(m, show_freshness=True):
     home = m.get("homeTeam", {}).get("name") or "TBD (opponent not decided yet)"
     away = m.get("awayTeam", {}).get("name") or "TBD (opponent not decided yet)"
     score = m.get("score", {})
@@ -390,7 +435,8 @@ def format_match(m):
             pens = score.get("penalties", {})
             winner = home if m.get("score", {}).get("winner") == "HOME_TEAM" else away
             note = f" ({winner} win {pens.get('home')}-{pens.get('away')} on penalties)"
-        return f"FINISHED on {date_str}: {home} {home_score}-{away_score} {away} [{label}]{note}{freshness(m.get('utcDate', ''))}"
+        tag = freshness(m.get("utcDate", "")) if show_freshness else ""
+        return f"FINISHED on {date_str}: {home} {home_score}-{away_score} {away} [{label}]{note}{tag}"
     if status in ("IN_PLAY", "PAUSED"):
         return f"IN PLAY RIGHT NOW: {home} vs {away} [{label}]"
     if status in ("POSTPONED", "SUSPENDED", "CANCELLED"):
@@ -429,6 +475,14 @@ def recent_focus_load():
         if sum(text.count(name) for name in FOCUS_TEAMS) >= FOCUS_SUBJECT_MENTIONS:
             loaded += 1
     return loaded
+
+
+def mentioned_recently(name):
+    needle = name.lower()
+    for f in journal_files()[-FOCUS_WINDOW:]:
+        if needle in f.read_text(encoding="utf-8").lower():
+            return True
+    return False
 
 
 def build_context():
@@ -495,9 +549,17 @@ def build_context():
         priority = "derby"
         sections.append(f"DERBY, {derby_name}:\n{format_match(derby_match)}")
 
-    rival_drops = get_rival_results()
-    if rival_drops:
-        sections.append("RIVALS DROPPED POINTS:\n" + "\n".join(rival_drops))
+    rival_losses, rival_draws, unpoked_losses = get_rival_results()
+    if rival_losses or rival_draws:
+        if unpoked_losses and priority in ("quiet", "league"):
+            priority = "rival_slip"
+        sections.append(
+            f"RIVALS STUMBLING (last {RIVAL_LOOKBACK_DAYS} days, friendlies and "
+            "preseason included. Check the competition in brackets before calling "
+            "anything a league result. Anything marked fair game has not been "
+            "covered here yet, so it is not old news no matter when it was played):\n"
+            + "\n".join(rival_losses + rival_draws)
+        )
 
     if not sections:
         return priority, ""
@@ -533,10 +595,6 @@ def build_prompt(priority, context, use_search):
     entry_number = get_entry_number()
     recent_entries = get_recent_entries()
 
-    editor_note = ""
-    if today <= datetime(2026, 7, 30).date():
-        editor_note = "\n- The Editor will be in the stadium for the Fenerbahçe vs Górnik Zabrze Champions League qualifier first leg in Istanbul on 21 July. If that tie is in the data, work it in naturally: the Editor looking forward to being there, or having been there once it is played. One brief line, never forced."
-
     if use_search:
         news_check = "You get exactly 1 web search for the whole entry, spend it wisely. Spend it on the story you actually want to write about today, from anywhere in European or world football: a transfer, an injury, a manager under pressure, a tactical talking point, a club in crisis, whatever is live. Do not default to searching for your own clubs. A search about Real Madrid or Fenerbahçe is only worth it when something notable is genuinely happening to them, not as a reflex. Skip the search entirely if the structured data and your own knowledge are already enough to write a good entry."
     else:
@@ -548,6 +606,7 @@ def build_prompt(priority, context, use_search):
         "derby": f"There is an upcoming or recent derby. Lead with it. Build the anticipation or dissect the result. {news_check} Only bring transfer talk in if it's directly relevant to one of the derby sides, otherwise skip it today.",
         "team_news": f"One of your clubs has something real going on, so today you have earned the right to lead with them. Say what you actually think. {news_check} Keep it to one club and one angle, then get out. Do not tour both of them.",
         "league": f"No tournament, no derby, nothing pressing at your clubs. Today belongs to the wider game. Pick one story from the rotating leagues in the data or from the search and write about it properly. A tactical trend, a surprising table, a player finding form, a club quietly falling apart. Your own clubs are not the subject today, at most a passing line. {news_check}",
+        "rival_slip": f"One of the four clubs you cannot stand just lost. Take the shot. Lead with it, enjoy it, and be specific about how they lost rather than just noting that they did. A friendly or a preseason defeat still counts as material, you just have to be honest about what it was and not dress it up as a competitive result. {news_check} Keep it witty rather than bitter, land it in a paragraph or two, then move to something else.",
         "quiet": f"A genuinely quiet day, which is the fun kind. Write about football history or a memory: a famous match on or around this date in any year, a player worth remembering, an old rivalry, a tactical idea that changed things, a great team that never won anything. Be specific and tell it like a story, with names, dates and detail you are certain of. {news_check} A live news story is also fine if you find one worth the space.",
     }
 
@@ -561,7 +620,7 @@ def build_prompt(priority, context, use_search):
 
 **Allegiances:** Turkey national team, Real Madrid, Fenerbahçe. These are your teams and the voice stays personal, but they earn the lead only when something genuinely notable actually happened to them: a real match, a real signing, a real crisis. A routine fixture is not notable. When the data marks them as background only, they get at most one passing line and the entry is about something else entirely. Never manufacture a reason to write about them, and never stretch to a Turkish or Madrid angle on a story that does not have one. If one is in a tournament, cheer for them. Ronaldo over Messi. Acknowledge the other side's greatness, but you know where you stand.
 
-**Rivalries:** Galatasaray, Beşiktaş, Barcelona and Atlético are the four you cannot stand. You follow them to enjoy their misery, and when they slip you say so. Witty, not petty, and never gloating at length. Never dislike a team without a reason.
+**Rivalries:** Galatasaray, Beşiktaş, Barcelona and Atlético are the four you cannot stand. You follow them to enjoy their misery, and when they slip you say so. When the data shows one of them losing, do not let it pass without comment: that is exactly the material this journal exists for, and a preseason friendly counts. Witty, not petty, and never gloating at length. Never dislike a team without a reason.
 
 **How to write:**
 - This is a journal, not a results board. Results are context, not content. Write about what actually interests you that day: a tactical trend, a player's form, a historical parallel, a rivalry angle.
@@ -571,7 +630,7 @@ def build_prompt(priority, context, use_search):
 - Predictions are optional. Only make one if you have something genuinely worth saying about the game. If you do, fold it naturally into the analysis, one sentence at the end of the paragraph. No bold labels, no separate lines, no standalone scorelines. Reason through it: form, tactical matchup, key absences, tournament pressure. The scoreline should follow from the argument, not be reached out of habit.
 - When referencing past predictions, be honest: say whether you got it right or wrong.
 - A historical thread, an old memory or an "on this day" fact is welcome on any day, not just quiet ones. Football only, no other sports. Weave it in naturally rather than announcing it.
-- Occasionally nod to "the Editor" who runs this. Brief, never forced.{editor_note}
+- Occasionally nod to "the Editor" who runs this. Brief, never forced. Never place the Editor at a match, in a stadium, or travelling to one, and never write that I attended a match, unless a previous entry says so explicitly.
 - Acknowledge milestones naturally: entry 1 gets a line, entries 50/100/200/365 get a nod. Ignore everything else.
 - Only build an entry around the Turkey national team when there is a Turkey match in the data. Turkish football history is fair game as a subject in its own right, but do not bend an unrelated story into a Turkish angle just because you are Turkish.
 - End with one sentence that provokes thought, lands a joke, or makes a bold prediction.
@@ -593,6 +652,7 @@ def build_prompt(priority, context, use_search):
 - Before writing about a match that also appears in the previous entries provided, check what was already said about it. Keep any scoreline or result consistent with that account, don't restate it as if new, and don't invent extra details (like a different scoreline) to make it feel fresh.
 - Don't slap "underdog" or "surprise" on a team just because they won a knockout match. Judge it on the actual gap in quality: a team with a strong squad or pedigree beating a good side isn't an upset. Reserve "shock" language for results where the gap in quality or ranking was real.
 - Never make geographic or continental claims about multiple teams at once unless you are certain all of them fit. Do not call teams "African" or "European" or "South American" in a group statement unless every team in that group actually belongs there.
+- No religious content of any kind. No prayer, faith, ritual, blessing or scripture, not as subject and not as metaphor or atmosphere.
 - No exclamation marks. No forced humor. No sugarcoating.
 - Don't call this "the column." Just write.
 - Do not start your response with a date heading or entry number heading. Never write a line like "30/06/26" or "30/06/26 — Entry 2" at the top. The heading is added automatically.
