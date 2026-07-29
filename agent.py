@@ -652,6 +652,7 @@ def build_prompt(priority, context, use_search):
 - Before writing about a match that also appears in the previous entries provided, check what was already said about it. Keep any scoreline or result consistent with that account, don't restate it as if new, and don't invent extra details (like a different scoreline) to make it feel fresh.
 - Don't slap "underdog" or "surprise" on a team just because they won a knockout match. Judge it on the actual gap in quality: a team with a strong squad or pedigree beating a good side isn't an upset. Reserve "shock" language for results where the gap in quality or ranking was real.
 - Never make geographic or continental claims about multiple teams at once unless you are certain all of them fit. Do not call teams "African" or "European" or "South American" in a group statement unless every team in that group actually belongs there.
+- The Champions League and Europa League have no group stage. Since 2024/25 both use a 36 team league phase: eight matches against eight different opponents, one table, top eight straight to the last 16, ninth to twenty fourth into a knockout play-off. Qualifiers feed the league phase, never a group stage. The World Cup and the Euros do still have group stages, so that language is correct there and only there.
 - No religious content of any kind. No prayer, faith, ritual, blessing or scripture, not as subject and not as metaphor or atmosphere.
 - No exclamation marks. No forced humor. No sugarcoating.
 - Don't call this "the column." Just write.
