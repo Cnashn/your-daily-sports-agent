@@ -672,6 +672,7 @@ Today's priority: {instruction}"""
 WRITER_MODEL = "claude-haiku-4-5-20251001"
 TOURNAMENT_WRITER_MODEL = "claude-sonnet-5"
 VERIFIER_MODEL = "claude-sonnet-5"
+VERIFIER_EFFORT = "medium"
 AUX_MODEL = "claude-haiku-4-5-20251001"
 MAX_PAUSE_ITERATIONS = 6
 
@@ -811,10 +812,11 @@ Check the entry against these rules:
 
 Output format, strictly. If there are no violations, your entire reply is the single word OK. Otherwise write one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). Keep every line under 40 words and never write more than five lines. Do not restate the rules, do not mention rules the entry passes, do not explain how you reached the verdict, do not write a preamble, a heading or a closing remark."""
 
-    for max_tokens in (1600, 2400):
+    for max_tokens in (4000, 8000):
         message = client.messages.create(
             model=VERIFIER_MODEL,
             max_tokens=max_tokens,
+            output_config={"effort": VERIFIER_EFFORT},
             messages=[{"role": "user", "content": prompt}],
         )
         log_usage("verify", message)
