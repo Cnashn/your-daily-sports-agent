@@ -678,9 +678,11 @@ MAX_PAUSE_ITERATIONS = 6
 
 def log_usage(label, message, extra=""):
     u = message.usage
+    details = getattr(u, "output_tokens_details", None)
+    thinking = getattr(details, "thinking_tokens", 0) or 0
     print(
         f"[usage] {label} stop={message.stop_reason} "
-        f"in={u.input_tokens} out={u.output_tokens} "
+        f"in={u.input_tokens} out={u.output_tokens} think={thinking} "
         f"cache_read={u.cache_read_input_tokens or 0} "
         f"cache_write={u.cache_creation_input_tokens or 0}{extra}"
     )
@@ -807,16 +809,13 @@ Check the entry against these rules:
 8. Streak and aggregate claims (unbeaten, has not conceded, kept every clean sheet, scored in every match) must not contradict the scorelines in the structured data, the previous entries, or the entry itself. A team credited with a 2-1 win has conceded a goal; flag any claim that says otherwise.
 9. Historical claims about football before this season (who won a tournament, who qualified for one, who a club signed, where a player was in a given year, what happened in a famous match) must be true as you know it. This journal writes about football history often, and the structured data cannot support any of it, so your own knowledge is the check. Flag anything you are confident is wrong and state the correct fact: the right result, the right year, or that the team in question was not in that tournament at all. Be especially careful with claims that a country played in a World Cup or Euro it did not qualify for. If you are genuinely unsure, do not flag it.
 
-Output format, strictly. Your reply continues the text "VERDICT:" and contains nothing else. If there are no violations, your entire reply is the single word OK. Otherwise write one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). Keep every line under 40 words and never write more than five lines. Do not restate the rules, do not mention rules the entry passes, do not explain how you reached the verdict, do not write a preamble, a heading or a closing remark."""
+Output format, strictly. If there are no violations, your entire reply is the single word OK. Otherwise write one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). Keep every line under 40 words and never write more than five lines. Do not restate the rules, do not mention rules the entry passes, do not explain how you reached the verdict, do not write a preamble, a heading or a closing remark."""
 
     for max_tokens in (1600, 2400):
         message = client.messages.create(
             model=VERIFIER_MODEL,
             max_tokens=max_tokens,
-            messages=[
-                {"role": "user", "content": prompt},
-                {"role": "assistant", "content": "VERDICT:"},
-            ],
+            messages=[{"role": "user", "content": prompt}],
         )
         log_usage("verify", message)
         if message.stop_reason != "max_tokens":
