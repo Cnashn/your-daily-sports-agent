@@ -671,6 +671,7 @@ Today's priority: {instruction}"""
 
 WRITER_MODEL = "claude-haiku-4-5-20251001"
 TOURNAMENT_WRITER_MODEL = "claude-sonnet-5"
+TOURNAMENT_WRITER_EFFORT = "high"
 VERIFIER_MODEL = "claude-sonnet-5"
 VERIFIER_EFFORT = "medium"
 AUX_MODEL = "claude-haiku-4-5-20251001"
@@ -715,14 +716,16 @@ def extract_search_evidence(messages, final_message):
     return "\n".join(unique)
 
 
-def generate_entry(system, user, use_search, model):
+def generate_entry(system, user, use_search, model, effort=None):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     kwargs = {}
     if use_search:
         kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}]
+    if effort:
+        kwargs["output_config"] = {"effort": effort}
 
     message = None
-    for max_tokens in (2048, 3072):
+    for max_tokens in (4000, 8000):
         messages = [{"role": "user", "content": user}]
         for iteration in range(1, MAX_PAUSE_ITERATIONS + 1):
             message = client.messages.create(
@@ -894,10 +897,13 @@ def main():
     priority, context = build_context()
     print(f"Priority: {priority}")
     use_search = priority in ("quiet", "team_news", "league")
-    writer_model = TOURNAMENT_WRITER_MODEL if priority == "major_tournament" else WRITER_MODEL
-    print(f"Writer model: {writer_model}")
+    if priority == "major_tournament":
+        writer_model, writer_effort = TOURNAMENT_WRITER_MODEL, TOURNAMENT_WRITER_EFFORT
+    else:
+        writer_model, writer_effort = WRITER_MODEL, None
+    print(f"Writer model: {writer_model} effort={writer_effort or 'n/a'}")
     system, user = build_prompt(priority, context, use_search)
-    entry, evidence = generate_entry(system, user, use_search, writer_model)
+    entry, evidence = generate_entry(system, user, use_search, writer_model, writer_effort)
 
     violations = verify_entry(entry, context, evidence)
     repairs = 0
