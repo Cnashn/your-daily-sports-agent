@@ -767,6 +767,19 @@ def extract_tagged_entry(content):
     return "".join(b.text for b in content[last_tool + 1:] if b.type == "text").strip()
 
 
+def parse_violations(text):
+    return [line.strip("- ").strip() for line in text.splitlines() if line.strip().startswith("-")]
+
+
+def salvage_truncated_verdict(raw):
+    complete = raw.rsplit("\n", 1)[0] if "\n" in raw else ""
+    violations = parse_violations(complete)
+    if not violations:
+        raise RuntimeError("verifier verdict truncated with nothing usable, refusing to publish unverified")
+    print(f"[warn] verdict truncated twice, salvaged {len(violations)} complete violations")
+    return violations
+
+
 def verify_entry(entry, context, evidence):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     prompt = f"""You are a factcheck gate for a daily sports journal. The writer only receives final scores, team names, competitions, stages and dates, plus its own previous entries and the web evidence below. It has no goalscorer, lineup or player-event data.
@@ -794,25 +807,29 @@ Check the entry against these rules:
 8. Streak and aggregate claims (unbeaten, has not conceded, kept every clean sheet, scored in every match) must not contradict the scorelines in the structured data, the previous entries, or the entry itself. A team credited with a 2-1 win has conceded a goal; flag any claim that says otherwise.
 9. Historical claims about football before this season (who won a tournament, who qualified for one, who a club signed, where a player was in a given year, what happened in a famous match) must be true as you know it. This journal writes about football history often, and the structured data cannot support any of it, so your own knowledge is the check. Flag anything you are confident is wrong and state the correct fact: the right result, the right year, or that the team in question was not in that tournament at all. Be especially careful with claims that a country played in a World Cup or Euro it did not qualify for. If you are genuinely unsure, do not flag it.
 
-Output format, strictly: if there are no violations, reply with exactly OK and nothing else. Otherwise output one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). No preamble, no analysis, no other text."""
+Output format, strictly. Your reply continues the text "VERDICT:" and contains nothing else. If there are no violations, your entire reply is the single word OK. Otherwise write one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). Keep every line under 40 words and never write more than five lines. Do not restate the rules, do not mention rules the entry passes, do not explain how you reached the verdict, do not write a preamble, a heading or a closing remark."""
 
     for max_tokens in (1600, 2400):
         message = client.messages.create(
             model=VERIFIER_MODEL,
             max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": "VERDICT:"},
+            ],
         )
         log_usage("verify", message)
         if message.stop_reason != "max_tokens":
             break
         print(f"[warn] verifier hit max_tokens={max_tokens}, retrying with a larger budget")
+
+    raw = "".join(b.text for b in message.content if b.type == "text")
     if message.stop_reason == "max_tokens":
-        raise RuntimeError("verifier verdict truncated twice, refusing to publish unverified")
-    text = "".join(b.text for b in message.content if b.type == "text").strip()
+        return salvage_truncated_verdict(raw)
+    text = raw.strip()
     if text == "OK" or text.upper().startswith("OK"):
         return []
-    violations = [line.strip("- ").strip() for line in text.splitlines() if line.strip().startswith("-")]
-    return violations or [text]
+    return parse_violations(text) or [text]
 
 
 def repair_entry(entry, violations):
