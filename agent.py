@@ -773,8 +773,40 @@ def extract_tagged_entry(content):
     return "".join(b.text for b in content[last_tool + 1:] if b.type == "text").strip()
 
 
-def parse_violations(text):
+RETRACTION_MARKERS = (
+    "no violation",
+    "not a violation",
+    "no rule violation",
+    "does not violate",
+    "doesn't violate",
+    "no rule broken",
+    "no rule is broken",
+)
+
+
+def is_retraction(line):
+    lowered = line.lower()
+    return any(marker in lowered for marker in RETRACTION_MARKERS)
+
+
+def bullet_lines(text):
     return [line.strip("- ").strip() for line in text.splitlines() if line.strip().startswith("-")]
+
+
+def parse_violations(text):
+    return [line for line in bullet_lines(text) if not is_retraction(line)]
+
+
+def interpret_verdict(text):
+    if text == "OK" or text.upper().startswith("OK"):
+        return []
+    violations = parse_violations(text)
+    if violations:
+        return violations
+    if bullet_lines(text) or is_retraction(text):
+        print("[info] verifier flagged nothing it stood behind, treating entry as clean")
+        return []
+    return [text]
 
 
 def salvage_truncated_verdict(raw):
@@ -813,7 +845,7 @@ Check the entry against these rules:
 8. Streak and aggregate claims (unbeaten, has not conceded, kept every clean sheet, scored in every match) must not contradict the scorelines in the structured data, the previous entries, or the entry itself. A team credited with a 2-1 win has conceded a goal; flag any claim that says otherwise.
 9. Historical claims about football before this season (who won a tournament, who qualified for one, who a club signed, where a player was in a given year, what happened in a famous match) must be true as you know it. This journal writes about football history often, and the structured data cannot support any of it, so your own knowledge is the check. Flag anything you are confident is wrong and state the correct fact: the right result, the right year, or that the team in question was not in that tournament at all. Be especially careful with claims that a country played in a World Cup or Euro it did not qualify for. If you are genuinely unsure, do not flag it.
 
-Output format, strictly. If there are no violations, your entire reply is the single word OK. Otherwise write one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). Keep every line under 40 words and never write more than five lines. Do not restate the rules, do not mention rules the entry passes, do not explain how you reached the verdict, do not write a preamble, a heading or a closing remark."""
+Output format, strictly. Every line you write is an assertion that the entry is factually wrong, so never write a line that ends by concluding the phrase is actually fine. If your check shows a phrase is consistent with the data, write nothing about it. If there are no violations, your entire reply is the single word OK. Otherwise write one line per violation, each starting with "- ", quoting the offending phrase, naming the rule broken, and stating the correct fact from the data (the real date, the real kickoff time, or that the match has not been played). Keep every line under 40 words and never write more than five lines. Do not restate the rules, do not mention rules the entry passes, do not explain how you reached the verdict, do not write a preamble, a heading or a closing remark."""
 
     for max_tokens in (4000, 8000):
         message = client.messages.create(
@@ -830,10 +862,7 @@ Output format, strictly. If there are no violations, your entire reply is the si
     raw = "".join(b.text for b in message.content if b.type == "text")
     if message.stop_reason == "max_tokens":
         return salvage_truncated_verdict(raw)
-    text = raw.strip()
-    if text == "OK" or text.upper().startswith("OK"):
-        return []
-    return parse_violations(text) or [text]
+    return interpret_verdict(raw.strip())
 
 
 def repair_entry(entry, violations):
